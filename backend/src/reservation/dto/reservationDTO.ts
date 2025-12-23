@@ -1,6 +1,7 @@
 export class CreateReservationDto {
+  name: string;
+  email: string;
   courtId: number;
-  userId: number;
   date: string;
   startTime: string;
   endTime: string;

@@ -1,98 +1,208 @@
-import {
-  Injectable,
-  BadRequestException,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateReservationDto } from './dto/reservationDTO';
 import { Reserva } from '@prisma/client';
+import { UserService } from '../user/user.service';
 import * as crypto from 'crypto';
+import { DateTime } from 'luxon';
+
+const AR_TZ = 'America/Argentina/Buenos_Aires';
 
 @Injectable()
 export class ReservationService {
   private readonly BASE_PRICE = 72000;
   private readonly CANCELLATION_HOURS_LIMIT = 3;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly userService: UserService,
+  ) {}
 
+  // =========================
+  // CREATE
+  // =========================
   async create(dto: CreateReservationDto): Promise<Reserva> {
-    const { courtId, userId, date, startTime, endTime } = dto;
+    const { name, email, courtId, date, startTime, endTime } = dto;
 
     await this.validateCourtAvailability(courtId);
-    await this.checkTimeSlotAvailability(courtId, date, startTime, endTime);
 
-    const price = this.calculatePrice();
+    // Construimos tiempos de forma consistente (AR -> UTC)
+    const { dateUTC, startUTC, endUTC } = this.buildTimes(date, startTime, endTime);
+
+    // Validar solapamiento usando los mismos instantes UTC
+    await this.checkTimeSlotAvailability(courtId, dateUTC, startUTC, endUTC);
+
+    // Crear/reutilizar usuario automáticamente
+    const user = await this.userService.createOrGet({ name, email });
+
+    const price = this.calculatePrice(startUTC, endUTC);
     const cancelToken = crypto.randomUUID();
-
-    // ✅ Crear fechas en UTC para evitar problemas de zona horaria
-    const startDateTime = new Date(`${date}T${startTime}:00Z`); // ← Agregar :00Z
-    const endDateTime = new Date(`${date}T${endTime}:00Z`); // ← Agregar :00Z
 
     return this.prisma.reserva.create({
       data: {
         courtId,
-        userId,
-        date: new Date(`${date}T00:00:00Z`), // ← UTC
-        startTime: startDateTime,
-        endTime: endDateTime,
+        userId: user.id,
+        date: dateUTC,
+        startTime: startUTC,
+        endTime: endUTC,
         price,
         cancelToken,
         status: 'ACTIVE',
+        refunded: false,
       },
       include: {
         court: {
-          select: {
-            id: true,
-            name: true,
-            active: true,
-          },
+          select: { id: true, name: true, active: true },
         },
         user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
+          select: { id: true, name: true, email: true },
         },
       },
     });
   }
 
+  // =========================
+  // CANCEL BY TOKEN
+  // =========================
+  async cancelByToken(token: string): Promise<{
+    reservation: Reserva;
+    refundApplied: boolean;
+    message: string;
+    hoursUntilReservation: number;
+  }> {
+    const reservation = await this.prisma.reserva.findUnique({
+      where: { cancelToken: token },
+    });
+
+    if (!reservation) {
+      throw new NotFoundException('Reserva no encontrada o token inválido');
+    }
+
+    if (reservation.status === 'CANCELED') {
+      throw new BadRequestException('La reserva ya está cancelada');
+    }
+
+    // Comparación correcta: timestamps (no convertir now a UTC a mano)
+    const now = new Date();
+
+    const hoursUntilReservation =
+      (reservation.startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+    if (hoursUntilReservation < 0) {
+      throw new BadRequestException('No se puede cancelar una reserva que ya pasó');
+    }
+
+    const refundApplied = hoursUntilReservation >= this.CANCELLATION_HOURS_LIMIT;
+
+    const updatedReservation = await this.prisma.reserva.update({
+      where: { id: reservation.id },
+      data: {
+        status: 'CANCELED',
+        canceledAt: new Date(),
+        refunded: refundApplied,
+      },
+      include: {
+        court: { select: { id: true, name: true } },
+        user: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    const message = refundApplied
+      ? `Reserva cancelada. Se te devolverá el monto de $${reservation.price}.`
+      : `Reserva cancelada. No se aplicará reembolso (menos de ${this.CANCELLATION_HOURS_LIMIT} horas).`;
+
+    return {
+      reservation: updatedReservation,
+      refundApplied,
+      message,
+      hoursUntilReservation,
+    };
+  }
+
+  AR_TZ = 'America/Argentina/Buenos_Aires';
+
+  async getByToken(token: string) {
+    if (!token || token.length < 10) {
+      throw new BadRequestException('Token inválido');
+    }
+
+    const reservation = await this.prisma.reserva.findUnique({
+      where: { cancelToken: token },
+      include: {
+        court: { select: { id: true, name: true } },
+        user: { select: { name: true, email: true } },
+      },
+    });
+
+    if (!reservation) {
+      throw new NotFoundException('Reserva no encontrada o token inválido');
+    }
+
+    const now = new Date();
+    const hoursUntilReservation =
+      (reservation.startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+    const canCancel = reservation.status === 'ACTIVE' && hoursUntilReservation >= 0;
+
+    const refundEligible = canCancel && hoursUntilReservation >= this.CANCELLATION_HOURS_LIMIT;
+
+    // Si querés devolver horas “redondeadas” para UI
+    const hoursUntilRounded = Math.round(hoursUntilReservation * 100) / 100;
+
+    // Opcional: devolver horarios en AR para mostrar lindo
+    const startAR = DateTime.fromJSDate(reservation.startTime)
+      .setZone(AR_TZ)
+      .toFormat('yyyy-LL-dd HH:mm');
+    const endAR = DateTime.fromJSDate(reservation.endTime)
+      .setZone(AR_TZ)
+      .toFormat('yyyy-LL-dd HH:mm');
+
+    return {
+      reservation: {
+        id: reservation.id,
+        status: reservation.status,
+        price: reservation.price,
+        refunded: reservation.refunded, // esto será true recién después de cancelar
+        canceledAt: reservation.canceledAt,
+        startTime: startAR,
+        endTime: endAR,
+        court: reservation.court,
+        user: reservation.user,
+      },
+      canCancel,
+      refundEligible,
+      hoursUntilReservation: hoursUntilRounded,
+    };
+  }
+
+  // =========================
+  // VALIDATIONS
+  // =========================
   private async validateCourtAvailability(courtId: number): Promise<void> {
     const court = await this.prisma.cancha.findUnique({
       where: { id: courtId },
       select: { id: true, active: true },
     });
 
-    if (!court) {
-      throw new NotFoundException(`La cancha con ID ${courtId} no existe`);
-    }
-
-    if (!court.active) {
-      throw new BadRequestException('La cancha no está disponible');
-    }
+    if (!court) throw new NotFoundException(`La cancha con ID ${courtId} no existe`);
+    if (!court.active) throw new BadRequestException('La cancha no está disponible');
   }
 
+  /**
+   * Chequea solapamiento usando instantes UTC (consistentes).
+   */
   private async checkTimeSlotAvailability(
     courtId: number,
-    date: string,
-    startTime: string,
-    endTime: string,
+    dateUTC: Date,
+    startUTC: Date,
+    endUTC: Date,
   ): Promise<void> {
-    // ✅ Usar formato ISO con Z para UTC
-    const reservationDate = new Date(`${date}T00:00:00Z`);
-    const startDateTime = new Date(`${date}T${startTime}:00Z`);
-    const endDateTime = new Date(`${date}T${endTime}:00Z`);
-
     const overlapping = await this.prisma.reserva.findFirst({
       where: {
         courtId,
-        date: reservationDate,
+        date: dateUTC,
         status: 'ACTIVE',
-        AND: [
-          { startTime: { lt: endDateTime } },
-          { endTime: { gt: startDateTime } },
-        ],
+        AND: [{ startTime: { lt: endUTC } }, { endTime: { gt: startUTC } }],
       },
       select: { id: true },
     });
@@ -102,114 +212,36 @@ export class ReservationService {
     }
   }
 
-  private calculatePrice(): number {
-    return this.BASE_PRICE;
-  }
-
+  // =========================
+  // TIME BUILDERS (AR -> UTC)
+  // =========================
   /**
-   * Cancela una reserva usando el token de cancelación
-   * - Si cancela con 3+ horas de anticipación → Reembolso
-   * - Si cancela con menos de 3 horas → Sin reembolso
+   * Interpreta date/start/end como hora Argentina y la convierte a UTC.
+   * También soporta cruces de medianoche (end <= start).
    */
-  async cancelByToken(token: string): Promise<{
-    reservation: any;
-    refundApplied: boolean;
-    message: string;
-  }> {
-    // 1️⃣ Buscar la reserva
-    const reservation = await this.prisma.reserva.findUnique({
-      where: { cancelToken: token },
-    });
+  private buildTimes(date: string, startTime: string, endTime: string) {
+    const startAR = DateTime.fromISO(`${date}T${startTime}`, { zone: AR_TZ });
+    let endAR = DateTime.fromISO(`${date}T${endTime}`, { zone: AR_TZ });
 
-    if (!reservation) {
-      throw new NotFoundException('Reserva no encontrada o token inválido');
-    }
+    // Si el end es <= start, asumimos que termina al día siguiente
+    if (endAR <= startAR) endAR = endAR.plus({ days: 1 });
 
-    // 2️⃣ Verificar que no esté ya cancelada
-    if (reservation.status === 'CANCELED') {
-      throw new BadRequestException('La reserva ya está cancelada');
-    }
-
-    // 3️⃣ Calcular cuántas horas faltan para el turno
-    const now = new Date(); // Hora actual en tu zona horaria
-    const reservationDateTime = new Date(reservation.startTime); // Ya está en UTC desde la BD
-
-    // ✅ Convertir 'now' a UTC para comparar correctamente
-    const nowUTC = new Date(now.toISOString());
-
-    const hoursUntilReservation = this.getHoursDifference(
-      nowUTC,
-      reservationDateTime,
-    );
-
-    console.log('⏰ Horas hasta la reserva:', hoursUntilReservation);
-
-    // 4️⃣ Verificar si ya pasó el turno
-    if (hoursUntilReservation < 0) {
-      throw new BadRequestException(
-        'No se puede cancelar una reserva que ya pasó',
-      );
-    }
-
-    // 5️⃣ Determinar si aplica reembolso
-    const refundApplied =
-      hoursUntilReservation >= this.CANCELLATION_HOURS_LIMIT;
-
-    // 6️⃣ Actualizar la reserva
-    const updatedReservation = await this.prisma.reserva.update({
-      where: { id: reservation.id },
-      data: {
-        status: 'CANCELED',
-        canceledAt: new Date(),
-        refunded: refundApplied,
-      },
-      include: {
-        court: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-    });
-
-    // 7️⃣ Generar mensaje apropiado
-    let message: string;
-    if (refundApplied) {
-      message = `Reserva cancelada exitosamente. Se te devolverá el monto de $${reservation.price}. El reembolso se procesará en 5-7 días hábiles.`;
-    } else {
-      message = `Reserva cancelada. No se aplicará reembolso porque la cancelación fue realizada con menos de ${this.CANCELLATION_HOURS_LIMIT} horas de anticipación.`;
-    }
-
-    // 8️⃣ TODO: Aquí integrarías el sistema de pagos
-    if (refundApplied) {
-      console.log(
-        `💰 Reembolso pendiente: $${updatedReservation.price} para usuario ${updatedReservation.user}`,
-      );
-    }
+    // Guardamos "date" como inicio del día en AR (convertido a UTC)
+    const dayAR = DateTime.fromISO(date, { zone: AR_TZ }).startOf('day');
 
     return {
-      reservation: updatedReservation,
-      refundApplied,
-      message,
+      dateUTC: dayAR.toUTC().toJSDate(),
+      startUTC: startAR.toUTC().toJSDate(),
+      endUTC: endAR.toUTC().toJSDate(),
     };
   }
 
-  /**
-   * Calcula la diferencia en horas entre dos fechas
-   * @returns Número de horas (puede ser negativo si date2 es anterior a date1)
-   */
-  private getHoursDifference(date1: Date, date2: Date): number {
-    // Forzar comparación en milisegundos UTC
-    const diffInMs = date2.getTime() - date1.getTime();
-    const diffInHours = diffInMs / (1000 * 60 * 60);
-    return diffInHours;
+  // =========================
+  // PRICE
+  // =========================
+  private calculatePrice(startUTC: Date, endUTC: Date): number {
+    const hours = (endUTC.getTime() - startUTC.getTime()) / (1000 * 60 * 60);
+    if (hours <= 0) throw new BadRequestException('Duración inválida');
+    return hours * this.BASE_PRICE;
   }
 }

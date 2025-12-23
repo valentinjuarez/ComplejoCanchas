@@ -31,11 +31,15 @@ model Cancha {
 }
 
 model Reserva {
-  id        Int      @id @default(autoincrement())
-  date      DateTime
-  startTime DateTime
-  endTime   DateTime
-  price     Float
+  id          Int               @id @default(autoincrement())
+  date        DateTime
+  startTime   DateTime
+  endTime     DateTime
+  price       Float
+  status      ReservationStatus @default(ACTIVE)
+  cancelToken String?           @unique
+  canceledAt  DateTime?
+  refunded    Boolean           @default(false)
 
   userId  Int
   courtId Int
@@ -44,6 +48,11 @@ model Reserva {
   court Cancha  @relation(fields: [courtId], references: [id])
 
   createdAt DateTime @default(now())
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CANCELED
 }
 
 enum Role {

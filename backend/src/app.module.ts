@@ -3,8 +3,10 @@ import { PrismaModule } from './prisma/prisma.module';
 import { CourtModule } from './court/court.module';
 import { ReservationModule } from './reservation/reservation.module';
 import { UserModule } from './user/user.module';
+import { AuthModule } from './auth/auth.module';
+import { AdminModule } from './admin/reservations/admin.module';
 
 @Module({
-  imports: [PrismaModule, CourtModule, ReservationModule, UserModule],
+  imports: [PrismaModule, CourtModule, ReservationModule, UserModule, AuthModule, AdminModule],
 })
 export class AppModule {}

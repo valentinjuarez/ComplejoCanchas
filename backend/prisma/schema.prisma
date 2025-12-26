@@ -14,10 +14,13 @@ datasource db {
 }
 
 model Usuario {
-  id           Int       @id @default(autoincrement())
-  name         String
-  email        String    @unique
-  role         Role      @default(USER)
+  id    Int    @id @default(autoincrement())
+  name  String
+  email String @unique
+  role  Role   @default(USER)
+
+  passwordHash String? // solo admins (o futuro login)
+
   reservations Reserva[]
   createdAt    DateTime  @default(now())
 }
@@ -31,15 +34,20 @@ model Cancha {
 }
 
 model Reserva {
-  id          Int               @id @default(autoincrement())
-  date        DateTime
-  startTime   DateTime
-  endTime     DateTime
-  price       Float
-  status      ReservationStatus @default(ACTIVE)
-  cancelToken String?           @unique
+  id        Int               @id @default(autoincrement())
+  date      DateTime
+  startTime DateTime
+  endTime   DateTime
+  price     Float
+  status    ReservationStatus @default(ACTIVE)
+
+  @@index([status])
+  @@index([courtId])
+  @@index([startTime])
+
+  cancelToken String?   @unique
   canceledAt  DateTime?
-  refunded    Boolean           @default(false)
+  refunded    Boolean   @default(false)
 
   userId  Int
   courtId Int

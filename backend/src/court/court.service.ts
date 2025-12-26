@@ -1,9 +1,5 @@
 // court.service.ts
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Cancha } from '@prisma/client';
 import { CreateCourtDto } from './dto/courtDTO';

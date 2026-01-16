@@ -17,10 +17,11 @@ import { UpdateCourtDto } from '../../court/dto/updateCourtDTO';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { RolesGuard } from '../../auth/roles.guard';
 import { Roles } from '../../auth/roles.decorator';
+import { AdminRole } from '@prisma/client';
 
 @Controller('admin/courts')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN')
+@Roles(AdminRole.ADMIN)
 export class AdminCourtsController {
   constructor(private readonly courtService: CourtService) {}
 

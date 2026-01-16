@@ -3,6 +3,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { FilterReservationsDto } from './dto/filter-reservations.dto';
 import { UpdateReservationAdminDto } from './dto/update-reservation-admin.dto';
 import { Prisma } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { ChangeEmailDto } from './dto/change-email.dto';
+import { Role } from '@prisma/client';
 
 @Injectable()
 export class AdminService {
@@ -274,7 +278,7 @@ export class AdminService {
         courtId,
         date: new Date(`${date}T00:00:00Z`),
         status: 'ACTIVE',
-        ...(excludeReservationId && {
+        ...(excludeReservationId !== undefined && {
           id: { not: excludeReservationId },
         }),
         AND: [{ startTime: { lt: endDateTime } }, { endTime: { gt: startDateTime } }],
@@ -284,5 +288,58 @@ export class AdminService {
     if (overlapping) {
       throw new BadRequestException('El horario no está disponible para esta cancha');
     }
+  }
+
+  async changeAdminPassword(adminId: number, dto: ChangePasswordDto) {
+    const admin = await this.prisma.adminUser.findUnique({ where: { id: adminId } });
+
+    if (!admin || admin.role !== Role.ADMIN) {
+      throw new NotFoundException('Admin no encontrado');
+    }
+    if (!admin.passwordHash) {
+      throw new BadRequestException('El admin no tiene password configurada');
+    }
+
+    const ok = await bcrypt.compare(dto.currentPassword, admin.passwordHash);
+    if (!ok) throw new BadRequestException('Password actual incorrecta');
+
+    const newHash = await bcrypt.hash(dto.newPassword, 10);
+
+    await this.prisma.adminUser.update({
+      where: { id: adminId },
+      data: { passwordHash: newHash },
+    });
+
+    return { message: 'Contraseña actualizada correctamente' };
+  }
+
+  async changeAdminEmail(adminId: number, dto: ChangeEmailDto) {
+    const admin = await this.prisma.adminUser.findUnique({ where: { id: adminId } });
+
+    if (!admin || admin.role !== Role.ADMIN) {
+      throw new NotFoundException('Admin no encontrado');
+    }
+    if (!admin.passwordHash) {
+      throw new BadRequestException('El admin no tiene password configurada');
+    }
+
+    const ok = await bcrypt.compare(dto.currentPassword, admin.passwordHash);
+    if (!ok) throw new BadRequestException('Password actual incorrecta');
+
+    // chequear que el nuevo email no exista
+    const exists = await this.prisma.adminUser.findUnique({
+      where: { email: dto.newEmail },
+      select: { id: true },
+    });
+    if (exists && exists.id !== adminId) {
+      throw new BadRequestException('Ese email ya está en uso');
+    }
+
+    await this.prisma.adminUser.update({
+      where: { id: adminId },
+      data: { email: dto.newEmail },
+    });
+
+    return { message: 'Email actualizado correctamente', email: dto.newEmail };
   }
 }

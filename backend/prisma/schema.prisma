@@ -58,6 +58,20 @@ model Reserva {
   createdAt DateTime @default(now())
 }
 
+enum AdminRole {
+  ADMIN
+  STAFF
+}
+
+model AdminUser {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  passwordHash String
+  role         AdminRole @default(ADMIN)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
 enum ReservationStatus {
   ACTIVE
   CANCELED

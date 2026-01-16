@@ -1,4 +1,4 @@
-import { PrismaClient, Role } from '@prisma/client';
+import { PrismaClient, AdminRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -11,29 +11,30 @@ async function main() {
     throw new Error('Faltan ADMIN_EMAIL o ADMIN_PASSWORD en el .env');
   }
 
+  // ✅ No pisar si ya existe
+  const existing = await prisma.adminUser.findUnique({ where: { email } });
+
+  if (existing) {
+    console.log(`ℹ️ Admin ya existe (${email}). No se modificó.`);
+    return;
+  }
+
   const passwordHash = await bcrypt.hash(password, 10);
 
-  // Upsert: si existe, lo actualiza; si no, lo crea
-  await prisma.usuario.upsert({
-    where: { email },
-    update: {
-      role: Role.ADMIN,
-      passwordHash,
-      name: 'Admin',
-    },
-    create: {
+  await prisma.adminUser.create({
+    data: {
       email,
-      name: 'Admin',
-      role: Role.ADMIN,
       passwordHash,
+      role: AdminRole.ADMIN,
     },
   });
-  console.log('Usuario administrador creado o actualizado correctamente.');
+
+  console.log(`✅ Admin creado: ${email}`);
 }
 
 main()
   .catch((e) => {
-    console.error(e);
+    console.error('❌ Seed error:', e);
     process.exit(1);
   })
   .finally(async () => {

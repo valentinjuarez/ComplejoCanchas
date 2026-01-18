@@ -17,8 +17,10 @@ async function bootstrap() {
     }),
   );
 
-  // si querés prefijo global
-  // app.setGlobalPrefix('api');
+  app.enableCors({
+    origin: ['http://localhost:3001'],
+    credentials: true,
+  });
 
   await app.listen(3000);
 }

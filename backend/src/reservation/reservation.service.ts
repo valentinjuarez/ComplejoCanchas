@@ -24,6 +24,10 @@ export class ReservationService {
   async create(dto: CreateReservationDto): Promise<Reserva> {
     const { name, email, courtId, date, startTime, endTime } = dto;
 
+    this.ensureNotInPast(date, startTime);
+
+    // Validar cancha
+
     await this.validateCourtAvailability(courtId);
 
     // Construimos tiempos de forma consistente (AR -> UTC)
@@ -234,6 +238,19 @@ export class ReservationService {
       startUTC: startAR.toUTC().toJSDate(),
       endUTC: endAR.toUTC().toJSDate(),
     };
+  }
+
+  private ensureNotInPast(date: string, startTime: string) {
+    const startAR = DateTime.fromISO(`${date}T${startTime}`, { zone: AR_TZ });
+    if (!startAR.isValid) throw new BadRequestException('Fecha u horario inválido');
+
+    const nowAR = DateTime.now().setZone(AR_TZ);
+
+    if (startAR <= nowAR) {
+      throw new BadRequestException(
+        'No se puede reservar un horario que ya pasó. Elegí un horario futuro.',
+      );
+    }
   }
 
   // =========================

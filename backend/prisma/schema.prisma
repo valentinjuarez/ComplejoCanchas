@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -19,7 +13,9 @@ model Usuario {
   email String @unique
   role  Role   @default(USER)
 
-  passwordHash String? // solo admins (o futuro login)
+  // Si ya migraste a AdminUser, yo dejaría esto SOLO si lo usás.
+  // Si no lo usás más: lo sacamos luego.
+  passwordHash String?
 
   reservations Reserva[]
   createdAt    DateTime  @default(now())
@@ -34,17 +30,21 @@ model Cancha {
 }
 
 model Reserva {
-  id        Int               @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
   date      DateTime
   startTime DateTime
   endTime   DateTime
-  price     Float
-  status    ReservationStatus @default(ACTIVE)
 
-  @@index([status])
-  @@index([courtId])
-  @@index([startTime])
+  // Precio final (si pagó)
+  price Float
 
+  // ✅ ahora soporta flujo de pago / hold
+  status ReservationStatus @default(ACTIVE)
+
+  // ✅ “hold” vence si no paga
+  expiresAt DateTime?
+
+  // ✅ token para cancelación por mail
   cancelToken String?   @unique
   canceledAt  DateTime?
   refunded    Boolean   @default(false)
@@ -55,7 +55,67 @@ model Reserva {
   user  Usuario @relation(fields: [userId], references: [id])
   court Cancha  @relation(fields: [courtId], references: [id])
 
-  createdAt DateTime @default(now())
+  // ✅ pagos asociados (0 o muchos)
+  payments Payment[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt
+
+  @@index([status])
+  @@index([courtId])
+  @@index([startTime])
+  @@index([expiresAt])
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CANCELED
+
+  // ✅ Para MP:
+  PENDING_PAYMENT // se creó, está esperando pago
+  EXPIRED // venció el hold / pago no confirmado
+}
+
+enum PaymentProvider {
+  MERCADOPAGO
+}
+
+enum PaymentStatus {
+  CREATED // generaste preferencia
+  PENDING // el usuario está pagando
+  APPROVED // pagado ok
+  REJECTED // rechazado
+  CANCELLED // cancelado por usuario
+  REFUNDED // devuelto
+  CHARGEDBACK // contracargo (opcional)
+}
+
+model Payment {
+  id Int @id @default(autoincrement())
+
+  provider PaymentProvider @default(MERCADOPAGO)
+  status   PaymentStatus   @default(CREATED)
+
+  // total/importe del pago (seña)
+  amount   Float
+  currency String @default("ARS")
+
+  // IDs MercadoPago (opcionales hasta que se completen)
+  mpPreferenceId    String? @unique
+  mpPaymentId       String? @unique
+  mpMerchantOrderId String?
+
+  // Metadatos y trazabilidad
+  rawWebhook Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relación
+  reservationId Int
+  reservation   Reserva @relation(fields: [reservationId], references: [id])
+
+  @@index([reservationId])
+  @@index([status])
 }
 
 enum AdminRole {
@@ -70,11 +130,6 @@ model AdminUser {
   role         AdminRole @default(ADMIN)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
-}
-
-enum ReservationStatus {
-  ACTIVE
-  CANCELED
 }
 
 enum Role {

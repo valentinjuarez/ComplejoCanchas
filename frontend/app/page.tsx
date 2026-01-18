@@ -1,65 +1,94 @@
-import Image from "next/image";
+import Link from 'next/link';
 
-export default function Home() {
+export default function HomePage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50">
+      <section className="relative overflow-hidden px-4 py-20">
+        <div className="mx-auto max-w-6xl">
+          <div className="grid items-center gap-12 lg:grid-cols-2">
+            <div>
+              <h1 className="mb-6 text-5xl font-bold leading-tight text-gray-900">
+                Reservá tu Cancha
+                <span className="block text-purple-600">Online</span>
+              </h1>
+              <p className="mb-8 text-xl text-gray-600">
+                Elegí la cancha, el horario y reservá en segundos sin necesidad
+                de crear una cuenta.
+              </p>
+              <Link
+                href="/reservar"
+                className="inline-block rounded-xl bg-purple-600 px-8 py-4 text-lg font-semibold text-white shadow-lg transition hover:bg-purple-700"
+              >
+                Reservar Ahora →
+              </Link>
+            </div>
+
+            <div className="relative">
+              <div className="rounded-3xl bg-gradient-to-br from-purple-500 to-blue-500 p-8 shadow-2xl">
+                <div className="space-y-4 rounded-2xl bg-white p-6">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-600">
+                      Cancha 1 · Fútbol 5
+                    </span>
+                    <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
+                      ✓ Disponible
+                    </span>
+                  </div>
+                  <div className="text-2xl font-bold text-gray-900">
+                    18:00 - 19:00
+                  </div>
+                  <div className="text-3xl font-bold text-purple-600">
+                    $6.000
+                  </div>
+                  <div className="w-full rounded-xl bg-purple-600 py-3 text-center font-semibold text-white">
+                    Confirmar Reserva
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+      </section>
+
+      <section className="px-4 py-20">
+        <div className="mx-auto max-w-6xl">
+          <div className="grid gap-8 md:grid-cols-3">
+            <FeatureCard
+              icon="⚡"
+              title="Simple y rápido"
+              description="Reservá tu turno en menos de un minuto."
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            <FeatureCard
+              icon="🔒"
+              title="Sin crear cuenta"
+              description="Reservá sin necesidad de registrarte."
+            />
+            <FeatureCard
+              icon="📅"
+              title="Todo bajo control"
+              description="Evita dobles reservas y confusiones."
+            />
+          </div>
         </div>
-      </main>
+      </section>
+    </main>
+  );
+}
+
+function FeatureCard({
+                       icon,
+                       title,
+                       description,
+                     }: {
+  icon: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-2xl bg-white p-8 shadow-sm transition hover:shadow-md">
+      <div className="mb-4 text-5xl">{icon}</div>
+      <h3 className="mb-2 text-xl font-semibold text-gray-900">{title}</h3>
+      <p className="text-gray-600">{description}</p>
     </div>
   );
 }

@@ -1,3 +1,4 @@
+// admin/courts/admin-courts.controller.ts
 import {
   Body,
   Controller,
@@ -38,6 +39,15 @@ export class AdminCourtsController {
   @Patch(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCourtDto) {
     return this.courtService.update(id, dto);
+  }
+
+  // ✅ NUEVO: Endpoint específico para cambiar solo el precio
+  @Patch(':id/price')
+  updatePrice(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('pricePerHour') pricePerHour: number,
+  ) {
+    return this.courtService.update(id, { pricePerHour });
   }
 
   @Patch(':id/toggle')

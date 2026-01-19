@@ -23,6 +23,7 @@ export type Court = {
   name: string;
   type: string;
   active: boolean;
+  pricePerHour: number;
 };
 
 export type CreateReservationPayload = {

@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
 
 export class CreateCourtDto {
   @IsString()
@@ -11,5 +11,10 @@ export class CreateCourtDto {
 
   @IsOptional()
   @IsBoolean()
-  active?: boolean; // opcional, si no lo mandás, Prisma usa default(true)
+  active?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  pricePerHour?: number; // ✅ NUEVO - Opcional, usa default si no viene
 }

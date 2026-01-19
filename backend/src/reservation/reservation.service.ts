@@ -26,20 +26,17 @@ export class ReservationService {
 
     this.ensureNotInPast(date, startTime);
 
-    // Validar cancha
+    // ✅ Obtener cancha CON su precio
+    const court = await this.validateCourtAvailability(courtId);
 
-    await this.validateCourtAvailability(courtId);
-
-    // Construimos tiempos de forma consistente (AR -> UTC)
     const { dateUTC, startUTC, endUTC } = this.buildTimes(date, startTime, endTime);
 
-    // Validar solapamiento usando los mismos instantes UTC
     await this.checkTimeSlotAvailability(courtId, dateUTC, startUTC, endUTC);
 
-    // Crear/reutilizar usuario automáticamente
     const user = await this.userService.createOrGet({ name, email });
 
-    const price = this.calculatePrice(startUTC, endUTC);
+    // ✅ Calcular precio usando pricePerHour de la cancha
+    const price = this.calculatePrice(startUTC, endUTC, court.pricePerHour);
     const cancelToken = crypto.randomUUID();
 
     return this.prisma.reserva.create({
@@ -56,7 +53,12 @@ export class ReservationService {
       },
       include: {
         court: {
-          select: { id: true, name: true, active: true },
+          select: {
+            id: true,
+            name: true,
+            active: true,
+            pricePerHour: true, // ✅ INCLUIR
+          },
         },
         user: {
           select: { id: true, name: true, email: true },
@@ -182,14 +184,20 @@ export class ReservationService {
   // =========================
   // VALIDATIONS
   // =========================
-  private async validateCourtAvailability(courtId: number): Promise<void> {
+  private async validateCourtAvailability(courtId: number): Promise<{
+    id: number;
+    active: boolean;
+    pricePerHour: number;
+  }> {
     const court = await this.prisma.cancha.findUnique({
       where: { id: courtId },
-      select: { id: true, active: true },
+      select: { id: true, active: true, pricePerHour: true },
     });
 
     if (!court) throw new NotFoundException(`La cancha con ID ${courtId} no existe`);
     if (!court.active) throw new BadRequestException('La cancha no está disponible');
+
+    return court;
   }
 
   /**
@@ -256,9 +264,9 @@ export class ReservationService {
   // =========================
   // PRICE
   // =========================
-  private calculatePrice(startUTC: Date, endUTC: Date): number {
+  private calculatePrice(startUTC: Date, endUTC: Date, pricePerHour: number): number {
     const hours = (endUTC.getTime() - startUTC.getTime()) / (1000 * 60 * 60);
     if (hours <= 0) throw new BadRequestException('Duración inválida');
-    return hours * this.BASE_PRICE;
+    return hours * pricePerHour;
   }
 }

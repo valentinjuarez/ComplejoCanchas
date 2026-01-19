@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { Court, ReservationPublicResponse } from '@/lib/api';
 import { createReservation, getAvailability } from '@/lib/api';
 import CourtSelector from './CourtSelector';
@@ -33,6 +34,7 @@ function addOneHour(hhmm: string): string {
 }
 
 export default function BookingForm({ courts }: Props) {
+  const router = useRouter();
   const activeCourts = useMemo(() => courts.filter((c) => c.active), [courts]);
 
   const [courtId, setCourtId] = useState<number>(
@@ -57,6 +59,20 @@ export default function BookingForm({ courts }: Props) {
     [activeCourts, courtId],
   );
 
+  function resetForm() {
+    setSuccess(null);
+    setError(null);
+    setCreating(false);
+
+    const firstCourt = activeCourts[0]?.id ?? courts[0]?.id ?? 0;
+    setCourtId(firstCourt);
+    setDate(todayISO());
+    setStartTime('18:00');
+
+    setName('');
+    setEmail('');
+  }
+
   // Cargar disponibilidad
   useEffect(() => {
     if (!courtId || !date) return;
@@ -71,13 +87,10 @@ export default function BookingForm({ courts }: Props) {
         const res = await getAvailability(courtId, date);
         if (cancelled) return;
 
-        // ✅ CORREGIDO: occupiedSlots es un array de objetos
-        // Formato: [{ startTime: "14:00", endTime: "15:00", reservedBy: "Juan" }]
         const occupiedTimes = res.occupiedSlots.map((slot) => slot.startTime);
         setOccupied(occupiedTimes);
       } catch (e) {
-        const msg =
-          e instanceof Error ? e.message : 'Error cargando disponibilidad';
+        const msg = e instanceof Error ? e.message : 'Error cargando disponibilidad';
         if (!cancelled) setError(msg);
       } finally {
         if (!cancelled) setLoadingAvail(false);
@@ -121,12 +134,34 @@ export default function BookingForm({ courts }: Props) {
   }
 
   if (success) {
-    return <BookingSuccess reservation={success} />;
+    return (
+      <BookingSuccess
+        reservation={success}
+        onBookAnother={() => {
+          resetForm();
+          router.push('/');
+        }}
+        onGoHome={() => router.push('/')}
+      />
+    );
   }
 
   return (
     <div className="overflow-hidden rounded-3xl bg-white shadow-xl">
       <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-6 text-white">
+        <div className="mb-4 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => {
+              resetForm();
+              router.push('/');
+            }}
+            className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/40"
+          >
+            ← Volver al inicio
+          </button>
+        </div>
+
         <h2 className="text-2xl font-bold">Nueva Reserva</h2>
         <p className="text-purple-100">Completá los datos para confirmar</p>
       </div>
@@ -135,11 +170,7 @@ export default function BookingForm({ courts }: Props) {
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Left Column */}
           <div className="space-y-6">
-            <CourtSelector
-              courts={activeCourts}
-              value={courtId}
-              onChange={setCourtId}
-            />
+            <CourtSelector courts={activeCourts} value={courtId} onChange={setCourtId} />
 
             <DatePicker value={date} onChange={setDate} />
 
@@ -148,6 +179,7 @@ export default function BookingForm({ courts }: Props) {
               loading={loadingAvail}
               value={startTime}
               onChange={setStartTime}
+              dateISO={date}
             />
 
             <div>
@@ -178,12 +210,7 @@ export default function BookingForm({ courts }: Props) {
 
           {/* Right Column - Summary */}
           <div>
-            <BookingSummary
-              court={selectedCourt}
-              date={date}
-              startTime={startTime}
-              endTime={endTime}
-            />
+            <BookingSummary court={selectedCourt} date={date} startTime={startTime} endTime={endTime} />
           </div>
         </div>
 

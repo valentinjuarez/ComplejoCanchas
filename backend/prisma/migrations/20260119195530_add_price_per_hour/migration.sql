@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Cancha" ADD COLUMN     "pricePerHour" DOUBLE PRECISION NOT NULL DEFAULT 72000;

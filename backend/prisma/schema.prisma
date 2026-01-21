@@ -22,11 +22,14 @@ model Usuario {
 }
 
 model Cancha {
-  id           Int       @id @default(autoincrement())
+  id           Int     @id @default(autoincrement())
   name         String
   type         String
-  active       Boolean   @default(true)
-  pricePerHour Float     @default(72000)
+  active       Boolean @default(true)
+  pricePerHour Float   @default(72000)
+
+  playersCount Int @default(12) // 👈 NUEVO (F5=10, F6=12, etc)
+
   reservations Reserva[]
 }
 
@@ -38,6 +41,9 @@ model Reserva {
 
   // Precio final (si pagó)
   price Float
+
+  depositAmount Float @default(0) // ✅ seña
+  playersCount  Int   @default(12) // ✅ jugadores usados para calcular seña
 
   // ✅ ahora soporta flujo de pago / hold
   status ReservationStatus @default(ACTIVE)

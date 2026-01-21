@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "Cancha" ADD COLUMN     "playersCount" INTEGER NOT NULL DEFAULT 12;
+
+-- AlterTable
+ALTER TABLE "Reserva" ADD COLUMN     "depositAmount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN     "playersCount" INTEGER NOT NULL DEFAULT 12;

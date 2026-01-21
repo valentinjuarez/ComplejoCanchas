@@ -12,6 +12,9 @@ export type AvailabilityResponse = {
   court: {
     id: number;
     name: string;
+    pricePerHour: number;
+    playersCount: number;
+    depositPerPlayer: number;
   };
   date: string;
   occupiedSlots: OccupiedSlot[];
@@ -24,6 +27,7 @@ export type Court = {
   type: string;
   active: boolean;
   pricePerHour: number;
+  playersCount: number;
 };
 
 export type CreateReservationPayload = {
@@ -39,6 +43,7 @@ export type ReservationPublicResponse = {
   id: number;
   status: 'ACTIVE' | 'CANCELED';
   price: number;
+  depositAmount: number;
   refunded?: boolean;
   cancelToken?: string | null;
   canceledAt?: string | null;
@@ -53,8 +58,25 @@ export type CancelReservationResponse = {
   reservation: ReservationPublicResponse;
   refundApplied: boolean;
   message: string;
+  hoursUntilReservation: number;
 };
-
+export type ReservationByTokenResponse = {
+  reservation: {
+    id: number;
+    status: 'ACTIVE' | 'CANCELED';
+    price: number;
+    depositAmount: number;
+    refunded: boolean;
+    canceledAt: string | null;
+    startTime: string;
+    endTime: string;
+    court: { id: number; name: string };
+    user: { name: string; email: string };
+  };
+  canCancel: boolean;
+  refundEligible: boolean;
+  hoursUntilReservation: number;
+};
 // ---------- Helpers ----------
 async function handleJson<T>(res: Response): Promise<T> {
   const text = await res.text();
@@ -71,6 +93,15 @@ async function handleJson<T>(res: Response): Promise<T> {
 }
 
 // ---------- API ----------
+export async function getReservationByToken(
+  token: string,
+): Promise<ReservationByTokenResponse> {
+  const res = await fetch(`${API_URL}/reservations/by-token/${token}`, {
+    cache: 'no-store',
+  });
+  return handleJson<ReservationByTokenResponse>(res);
+}
+
 export async function getCourts(): Promise<Court[]> {
   const res = await fetch(`${API_URL}/courts`, { cache: 'no-store' });
   return handleJson<Court[]>(res);

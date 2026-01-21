@@ -7,7 +7,11 @@ type Props = {
   onGoHome?: () => void;
 };
 
-export default function BookingSuccess({ reservation, onBookAnother, onGoHome }: Props) {
+export default function BookingSuccess({
+                                         reservation,
+                                         onBookAnother,
+                                         onGoHome,
+                                       }: Props) {
   const [copied, setCopied] = useState(false);
 
   function copyToken() {
@@ -34,15 +38,19 @@ export default function BookingSuccess({ reservation, onBookAnother, onGoHome }:
             📧 Confirmación por Email
           </div>
           <p className="text-sm text-blue-700">
-            Te enviamos un email a <strong>{reservation.user.email}</strong> con todos
-            los detalles de tu reserva.
+            Te enviamos un email a <strong>{reservation.user.email}</strong> con
+            todos los detalles de tu reserva.
           </p>
         </div>
 
         <div className="space-y-4">
           <div className="rounded-xl border-2 border-purple-200 bg-purple-50 p-6 text-center">
-            <div className="text-sm font-medium text-purple-700">Número de Reserva</div>
-            <div className="mt-2 text-4xl font-bold text-purple-900">#{reservation.id}</div>
+            <div className="text-sm font-medium text-purple-700">
+              Número de Reserva
+            </div>
+            <div className="mt-2 text-4xl font-bold text-purple-900">
+              #{reservation.id}
+            </div>
           </div>
 
           <div className="rounded-xl border p-4">
@@ -88,7 +96,9 @@ export default function BookingSuccess({ reservation, onBookAnother, onGoHome }:
           </div>
 
           <div className="rounded-xl border p-4">
-            <div className="mb-2 text-sm font-medium text-gray-700">🔑 Token de Cancelación</div>
+            <div className="mb-2 text-sm font-medium text-gray-700">
+              🔑 Token de Cancelación
+            </div>
             <div className="flex items-center gap-2">
               <code className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded bg-gray-100 px-3 py-2 text-xs font-mono">
                 {reservation.cancelToken}
@@ -107,23 +117,40 @@ export default function BookingSuccess({ reservation, onBookAnother, onGoHome }:
         </div>
 
         <div className="mt-8 rounded-xl bg-purple-50 p-6">
-          <h3 className="mb-2 text-lg font-semibold text-purple-900">🏟️ Al llegar al complejo</h3>
+          <h3 className="mb-2 text-lg font-semibold text-purple-900">
+            🏟️ Al llegar al complejo
+          </h3>
           <p className="text-purple-700">
-            Indicá tu número de reserva <strong className="text-2xl">#{reservation.id}</strong> en recepción.
+            Indicá tu número de reserva{' '}
+            <strong className="text-2xl">#{reservation.id}</strong> en recepción.
           </p>
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <button
-            onClick={() => (onBookAnother ? onBookAnother() : window.location.reload())}
+            onClick={() =>
+              onBookAnother ? onBookAnother() : window.location.reload()
+            }
             className="w-full rounded-xl border-2 border-purple-600 px-6 py-3 font-semibold text-purple-600 transition hover:bg-purple-50"
           >
             Hacer otra reserva
           </button>
 
+          {/* ✅ BOTÓN NUEVO: cancelar con token (va a /cancelar?token=...) */}
+          {reservation.cancelToken && (
+            <a
+              href={`/cancelar?token=${reservation.cancelToken}`}
+              className="block w-full rounded-xl border-2 border-red-600 px-6 py-3 text-center font-semibold text-red-600 transition hover:bg-red-50"
+            >
+              Cancelar esta reserva
+            </a>
+          )}
+
           <button
-            onClick={() => (onGoHome ? onGoHome() : (window.location.href = '/'))}
-            className="w-full rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 px-6 py-3 font-semibold text-white shadow-lg transition hover:from-purple-700 hover:to-blue-700"
+            onClick={() =>
+              onGoHome ? onGoHome() : (window.location.href = '/')
+            }
+            className="w-full rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 px-6 py-3 font-semibold text-white shadow-lg transition hover:from-purple-700 hover:to-blue-700 sm:col-span-2"
           >
             Volver al Home
           </button>

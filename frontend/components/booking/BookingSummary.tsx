@@ -20,6 +20,8 @@ export default function BookingSummary({ court, date, startTime, endTime }: Prop
   const hours = calculateDuration(startTime, endTime);
   const pricePerHour = court?.pricePerHour ?? 72000;
   const totalPrice = hours * pricePerHour;
+  const playersCount = court?.playersCount ?? 10;
+  const depositAmount = Math.round((totalPrice / playersCount) / 100) * 100;
 
   return (
     <div className="sticky top-4 rounded-2xl bg-gradient-to-br from-purple-50 to-blue-50 p-6">
@@ -61,6 +63,17 @@ export default function BookingSummary({ court, date, startTime, endTime }: Prop
             <span className="text-3xl font-bold text-purple-600">
               ${totalPrice.toLocaleString('es-AR')}
             </span>
+          </div>
+          <div className="mt-4 rounded-lg border border-blue-200 bg-white p-4">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-gray-700">Seña (pagás ahora)</span>
+              <span className="text-2xl font-bold text-blue-600">
+                    ${depositAmount.toLocaleString('es-AR')}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              Se calcula como 1 jugador ({playersCount} jugadores). El resto se paga en el complejo.
+            </p>
           </div>
         </div>
       </div>

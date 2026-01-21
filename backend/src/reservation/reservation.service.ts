@@ -24,19 +24,36 @@ export class ReservationService {
   async create(dto: CreateReservationDto): Promise<Reserva> {
     const { name, email, courtId, date, startTime, endTime } = dto;
 
+    // ✅ No permitir reservar en el pasado (para el mismo día, por hora)
     this.ensureNotInPast(date, startTime);
 
-    // ✅ Obtener cancha CON su precio
+    // ✅ Obtener cancha (con precio y playersCount)
     const court = await this.validateCourtAvailability(courtId);
 
+    // ✅ Construir tiempos consistentes (AR -> UTC) con tu helper actual
     const { dateUTC, startUTC, endUTC } = this.buildTimes(date, startTime, endTime);
 
+    // ✅ Chequear solapamiento
     await this.checkTimeSlotAvailability(courtId, dateUTC, startUTC, endUTC);
 
+    // ✅ Crear o reutilizar usuario público
     const user = await this.userService.createOrGet({ name, email });
 
-    // ✅ Calcular precio usando pricePerHour de la cancha
+    // ✅ Total del turno
     const price = this.calculatePrice(startUTC, endUTC, court.pricePerHour);
+
+    // ✅ Cantidad de jugadores (para calcular seña)
+    const playersCount = court.playersCount ?? 10;
+    if (!Number.isFinite(playersCount) || playersCount <= 0) {
+      throw new BadRequestException('La cancha tiene playersCount inválido');
+    }
+
+    // ✅ Seña = precio por jugador (redondeo opcional)
+    const rawDeposit = price / playersCount;
+
+    // Opción A: exacto
+    const depositAmount = rawDeposit;
+
     const cancelToken = crypto.randomUUID();
 
     return this.prisma.reserva.create({
@@ -46,7 +63,12 @@ export class ReservationService {
         date: dateUTC,
         startTime: startUTC,
         endTime: endUTC,
+
+        // ✅ total y seña
         price,
+        depositAmount,
+        playersCount,
+
         cancelToken,
         status: 'ACTIVE',
         refunded: false,
@@ -57,7 +79,8 @@ export class ReservationService {
             id: true,
             name: true,
             active: true,
-            pricePerHour: true, // ✅ INCLUIR
+            pricePerHour: true,
+            playersCount: true, // ✅ incluir para mostrar en front
           },
         },
         user: {
@@ -108,13 +131,13 @@ export class ReservationService {
         refunded: refundApplied,
       },
       include: {
-        court: { select: { id: true, name: true } },
+        court: { select: { id: true, name: true} },
         user: { select: { id: true, name: true, email: true } },
       },
     });
 
     const message = refundApplied
-      ? `Reserva cancelada. Se te devolverá el monto de $${reservation.price}.`
+      ? `Reserva cancelada. Se te devolverá el monto de $${reservation.depositAmount}.`
       : `Reserva cancelada. No se aplicará reembolso (menos de ${this.CANCELLATION_HOURS_LIMIT} horas).`;
 
     return {
@@ -168,6 +191,7 @@ export class ReservationService {
         id: reservation.id,
         status: reservation.status,
         price: reservation.price,
+        depositAmount: reservation.depositAmount,
         refunded: reservation.refunded, // esto será true recién después de cancelar
         canceledAt: reservation.canceledAt,
         startTime: startAR,
@@ -185,13 +209,14 @@ export class ReservationService {
   // VALIDATIONS
   // =========================
   private async validateCourtAvailability(courtId: number): Promise<{
+    playersCount: number;
     id: number;
     active: boolean;
     pricePerHour: number;
   }> {
     const court = await this.prisma.cancha.findUnique({
       where: { id: courtId },
-      select: { id: true, active: true, pricePerHour: true },
+      select: { id: true, active: true, pricePerHour: true, playersCount: true },
     });
 
     if (!court) throw new NotFoundException(`La cancha con ID ${courtId} no existe`);

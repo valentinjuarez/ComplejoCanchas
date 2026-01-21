@@ -64,7 +64,13 @@ export class CourtService {
     }));
 
     return {
-      court: { id: court.id, name: court.name, pricePerHour: court.pricePerHour },
+      court: {
+        id: court.id,
+        name: court.name,
+        pricePerHour: court.pricePerHour,
+        playersCount: court.playersCount,
+        depositPerPlayer: court.pricePerHour / court.playersCount,
+      },
       date,
       occupiedSlots,
       totalReservations: occupiedSlots.length,

@@ -139,7 +139,6 @@ export default function BookingForm({ courts }: Props) {
         reservation={success}
         onBookAnother={() => {
           resetForm();
-          router.push('/');
         }}
         onGoHome={() => router.push('/')}
       />

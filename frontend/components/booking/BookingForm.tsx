@@ -146,7 +146,7 @@ export default function BookingForm({ courts }: Props) {
   }
 
   return (
-    <div className="overflow-hidden rounded-3xl bg-white shadow-xl">
+    <div className="overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5">
       <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-6 text-white">
         <div className="mb-4 flex items-center justify-between">
           <button
@@ -168,53 +168,60 @@ export default function BookingForm({ courts }: Props) {
       <div className="p-8">
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Left Column */}
-          <div className="space-y-6">
-            <CourtSelector courts={activeCourts} value={courtId} onChange={setCourtId} />
+          <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-lg transition hover:shadow-xl">
+            <div className="space-y-6">
+              <CourtSelector courts={activeCourts} value={courtId} onChange={setCourtId} />
 
-            <DatePicker value={date} onChange={setDate} />
+              <DatePicker value={date} onChange={setDate} />
 
-            <TimeSlotPicker
-              occupied={occupied}
-              loading={loadingAvail}
-              value={startTime}
-              onChange={setStartTime}
-              dateISO={date}
-            />
-
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                👤 Nombre completo
-              </label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-xl border border-gray-300 px-4 py-3 transition focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
-                placeholder="Ej: Juan Pérez"
+              <TimeSlotPicker
+                occupied={occupied}
+                loading={loadingAvail}
+                value={startTime}
+                onChange={setStartTime}
+                dateISO={date}
               />
-            </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                📧 Email
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-xl border border-gray-300 px-4 py-3 transition focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
-                placeholder="juan@gmail.com"
-              />
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  👤 Nombre completo
+                </label>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 shadow-sm transition focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                  placeholder="Ej: Juan Pérez"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  📧 Email
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 shadow-sm transition focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                  placeholder="juan@gmail.com"
+                />
+              </div>
             </div>
           </div>
 
           {/* Right Column - Summary */}
-          <div>
-            <BookingSummary court={selectedCourt} date={date} startTime={startTime} endTime={endTime} />
+          <div className="rounded-2xl border border-gray-100 bg-white p-3 shadow-lg transition hover:shadow-xl">
+            <BookingSummary
+              court={selectedCourt}
+              date={date}
+              startTime={startTime}
+              endTime={endTime}
+            />
           </div>
         </div>
 
         {error && (
-          <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">
+          <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700 shadow-md">
             <strong className="font-semibold">❌ Error:</strong> {error}
           </div>
         )}
@@ -222,7 +229,7 @@ export default function BookingForm({ courts }: Props) {
         <button
           onClick={onSubmit}
           disabled={creating || activeCourts.length === 0}
-          className="mt-8 w-full rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 px-6 py-4 text-lg font-semibold text-white shadow-lg transition hover:from-purple-700 hover:to-blue-700 disabled:opacity-50"
+          className="mt-8 w-full rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 px-6 py-4 text-lg font-semibold text-white shadow-xl transition hover:from-purple-700 hover:to-blue-700 hover:shadow-2xl disabled:opacity-50"
         >
           {creating ? 'Confirmando…' : '✓ Confirmar Reserva'}
         </button>

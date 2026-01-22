@@ -1,14 +1,12 @@
-import { IsBoolean, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class UpdateCourtDto {
   @IsOptional()
   @IsString()
-  @MinLength(2)
   name?: string;
 
   @IsOptional()
   @IsString()
-  @MinLength(2)
   type?: string;
 
   @IsOptional()
@@ -18,5 +16,10 @@ export class UpdateCourtDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
-  pricePerHour?: number; // ✅ NUEVO
+  pricePerHour?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  playersCount?: number;
 }

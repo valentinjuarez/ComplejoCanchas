@@ -8,7 +8,8 @@ import { DateTime } from 'luxon';
 
 @Injectable()
 export class CourtService {
-  AR_TZ = 'America/Argentina/Buenos_Aires';
+  private readonly AR_TZ = 'America/Argentina/Buenos_Aires';
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(): Promise<Cancha[]> {
@@ -18,22 +19,23 @@ export class CourtService {
     });
   }
 
-  async findOne(id: number): Promise<Cancha> {
-    const court = await this.prisma.cancha.findUnique({
-      where: { id },
+  async findAllIncludingInactive(): Promise<Cancha[]> {
+    return this.prisma.cancha.findMany({
+      orderBy: { name: 'asc' },
     });
+  }
 
-    if (!court) {
-      throw new NotFoundException(`Cancha con ID ${id} no encontrada`);
-    }
-
+  async findOne(id: number): Promise<Cancha> {
+    const court = await this.prisma.cancha.findUnique({ where: { id } });
+    if (!court) throw new NotFoundException(`Cancha con ID ${id} no encontrada`);
     return court;
   }
 
   async getAvailability(id: number, date: string) {
     const court = await this.findOne(id);
-
-    if (!court.active) throw new BadRequestException('La cancha no está disponible');
+    if (!court.active) {
+      throw new BadRequestException('La cancha no está disponible');
+    }
 
     // Día seleccionado en horario ARG
     const dayStartAR = DateTime.fromISO(date, { zone: this.AR_TZ }).startOf('day');
@@ -63,13 +65,17 @@ export class CourtService {
       reservedBy: r.user.name,
     }));
 
+    const playersCount = court.playersCount ?? 12;
+    const depositPerPlayer = playersCount > 0 ? court.pricePerHour / playersCount : 0;
+
     return {
       court: {
         id: court.id,
         name: court.name,
+        type: court.type,
         pricePerHour: court.pricePerHour,
-        playersCount: court.playersCount,
-        depositPerPlayer: court.pricePerHour / court.playersCount,
+        playersCount,
+        depositPerPlayer,
       },
       date,
       occupiedSlots,
@@ -84,12 +90,13 @@ export class CourtService {
       where: { courtId: id },
     });
 
+    // Mejor: "upcoming" por startTime >= ahora
+    const now = new Date();
     const upcomingReservations = await this.prisma.reserva.count({
       where: {
         courtId: id,
-        date: {
-          gte: new Date(),
-        },
+        status: 'ACTIVE',
+        startTime: { gte: now },
       },
     });
 
@@ -103,12 +110,20 @@ export class CourtService {
   }
 
   async create(dto: CreateCourtDto): Promise<Cancha> {
+    const playersCount =
+      dto.playersCount !== undefined && dto.playersCount !== null ? Number(dto.playersCount) : 12;
+
+    if (!Number.isFinite(playersCount) || playersCount <= 0) {
+      throw new BadRequestException('playersCount debe ser un número > 0');
+    }
+
     return this.prisma.cancha.create({
       data: {
         name: dto.name,
         type: dto.type,
         active: dto.active ?? true,
-        pricePerHour: dto.pricePerHour ?? 72000, // ✅ Usar default si no viene
+        pricePerHour: dto.pricePerHour ?? 72000,
+        playersCount,
       },
     });
   }
@@ -116,25 +131,32 @@ export class CourtService {
   async update(id: number, dto: UpdateCourtDto): Promise<Cancha> {
     await this.findOne(id);
 
+    const data: any = {};
+
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.type !== undefined) data.type = dto.type;
+    if (dto.active !== undefined) data.active = dto.active;
+    if (dto.pricePerHour !== undefined) data.pricePerHour = dto.pricePerHour;
+
+    if (dto.playersCount !== undefined) {
+      const playersCount = Number(dto.playersCount);
+      if (!Number.isFinite(playersCount) || playersCount <= 0) {
+        throw new BadRequestException('playersCount debe ser un número > 0');
+      }
+      data.playersCount = playersCount;
+    }
+
     return this.prisma.cancha.update({
       where: { id },
-      data: {
-        ...(dto.name && { name: dto.name }),
-        ...(dto.type && { type: dto.type }),
-        ...(dto.active !== undefined && { active: dto.active }),
-        ...(dto.pricePerHour !== undefined && { pricePerHour: dto.pricePerHour }), // ✅ NUEVO
-      },
+      data,
     });
   }
 
   async toggleActive(id: number): Promise<Cancha> {
     const court = await this.findOne(id);
-
     return this.prisma.cancha.update({
       where: { id },
-      data: {
-        active: !court.active,
-      },
+      data: { active: !court.active },
     });
   }
 
@@ -147,22 +169,10 @@ export class CourtService {
 
     if (reservationsCount > 0) {
       throw new BadRequestException(
-        `No se puede eliminar la cancha porque tiene ${reservationsCount} reserva(s) asociada(s). Considere desactivarla en su lugar.`,
+        `No se puede eliminar la cancha porque tiene ${reservationsCount} reserva(s) asociada(s). Considerá desactivarla.`,
       );
     }
 
-    return this.prisma.cancha.delete({
-      where: { id },
-    });
-  }
-
-  async findAllIncludingInactive(): Promise<Cancha[]> {
-    return this.prisma.cancha.findMany({
-      orderBy: { name: 'asc' },
-    });
-  }
-
-  private formatTime(date: Date): string {
-    return date.toISOString().split('T')[1].substring(0, 5);
+    return this.prisma.cancha.delete({ where: { id } });
   }
 }

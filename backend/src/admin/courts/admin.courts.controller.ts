@@ -43,10 +43,7 @@ export class AdminCourtsController {
 
   // ✅ NUEVO: Endpoint específico para cambiar solo el precio
   @Patch(':id/price')
-  updatePrice(
-    @Param('id', ParseIntPipe) id: number,
-    @Body('pricePerHour') pricePerHour: number,
-  ) {
+  updatePrice(@Param('id', ParseIntPipe) id: number, @Body('pricePerHour') pricePerHour: number) {
     return this.courtService.update(id, { pricePerHour });
   }
 

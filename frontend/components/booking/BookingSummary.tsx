@@ -30,14 +30,14 @@ export default function BookingSummary({ court, date, startTime, endTime }: Prop
       <div className="space-y-4">
         <div className="rounded-lg bg-white p-4">
           <div className="text-sm text-gray-500">Cancha</div>
-          <div className="font-semibold text-gray-900">
+          <div className="font-semibold text-purple-600">
             {court?.name ?? '...'} · {court?.type ?? '...'}
           </div>
         </div>
 
         <div className="rounded-lg bg-white p-4">
           <div className="text-sm text-gray-500">Fecha</div>
-          <div className="font-semibold text-gray-900">
+          <div className="font-semibold text-purple-600">
             {new Date(date + 'T00:00:00').toLocaleDateString('es-AR', {
               weekday: 'long',
               year: 'numeric',
@@ -49,7 +49,7 @@ export default function BookingSummary({ court, date, startTime, endTime }: Prop
 
         <div className="rounded-lg bg-white p-4">
           <div className="text-sm text-gray-500">Horario</div>
-          <div className="font-semibold text-gray-900">
+          <div className="font-semibold text-purple-600">
             {startTime} - {endTime} ({hours}h)
           </div>
         </div>

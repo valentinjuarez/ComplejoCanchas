@@ -77,7 +77,7 @@ model Reserva {
 enum ReservationStatus {
   ACTIVE
   CANCELED
-
+  COMPLETED
   // ✅ Para MP:
   PENDING_PAYMENT // se creó, está esperando pago
   EXPIRED // venció el hold / pago no confirmado

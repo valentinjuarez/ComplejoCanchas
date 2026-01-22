@@ -5,12 +5,12 @@ import { Reserva } from '@prisma/client';
 import { UserService } from '../user/user.service';
 import * as crypto from 'crypto';
 import { DateTime } from 'luxon';
+import { Cron } from '@nestjs/schedule';
 
 const AR_TZ = 'America/Argentina/Buenos_Aires';
 
 @Injectable()
 export class ReservationService {
-  private readonly BASE_PRICE = 72000;
   private readonly CANCELLATION_HOURS_LIMIT = 3;
 
   constructor(
@@ -285,7 +285,21 @@ export class ReservationService {
       );
     }
   }
+  async markCompletedReservations() {
+    const nowUTC = DateTime.now().toUTC().toJSDate();
 
+    await this.prisma.reserva.updateMany({
+      where: {
+        status: 'ACTIVE',
+        endTime: { lt: nowUTC },
+      },
+      data: { status: 'COMPLETED' },
+    });
+  }
+  @Cron('*/5 * * * *') // cada 5 minutos
+  async autoComplete() {
+    await this.markCompletedReservations();
+  }
   // =========================
   // PRICE
   // =========================

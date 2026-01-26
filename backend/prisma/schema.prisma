@@ -62,8 +62,7 @@ model Reserva {
   user  Usuario @relation(fields: [userId], references: [id])
   court Cancha  @relation(fields: [courtId], references: [id])
 
-  // ✅ pagos asociados (0 o muchos)
-  payments Payment[]
+  payment Payment?
 
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt
@@ -103,25 +102,21 @@ model Payment {
   provider PaymentProvider @default(MERCADOPAGO)
   status   PaymentStatus   @default(CREATED)
 
-  // total/importe del pago (seña)
   amount   Float
   currency String @default("ARS")
 
-  // IDs MercadoPago (opcionales hasta que se completen)
   mpPreferenceId    String? @unique
   mpPaymentId       String? @unique
   mpMerchantOrderId String?
 
-  // Metadatos y trazabilidad
   rawWebhook Json?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  // Relación
-  reservationId Int
+  // ✅ 1 pago por reserva
+  reservationId Int     @unique
   reservation   Reserva @relation(fields: [reservationId], references: [id])
 
-  @@index([reservationId])
   @@index([status])
 }
 

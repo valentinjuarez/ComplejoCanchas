@@ -6,8 +6,19 @@ import { UserService } from '../user/user.service';
 import * as crypto from 'crypto';
 import { DateTime } from 'luxon';
 import { Cron } from '@nestjs/schedule';
+import { PaymentService } from '../payments/payment.service';
+import { CreateHoldReservationDto } from './dto/create-hold.dto';
 
 const AR_TZ = 'America/Argentina/Buenos_Aires';
+
+type HoldCheckoutResponse = {
+  reservationId: number;
+  status: string;
+  expiresAt: Date | null;
+  depositAmount: number;
+  playersCount: number;
+  checkoutUrl: string;
+};
 
 @Injectable()
 export class ReservationService {
@@ -16,44 +27,32 @@ export class ReservationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly userService: UserService,
+    private readonly payments: PaymentService,
   ) {}
 
   // =========================
-  // CREATE
+  // CREATE (sin pago)
   // =========================
   async create(dto: CreateReservationDto): Promise<Reserva> {
     const { name, email, courtId, date, startTime, endTime } = dto;
 
-    // ✅ No permitir reservar en el pasado (para el mismo día, por hora)
     this.ensureNotInPast(date, startTime);
 
-    // ✅ Obtener cancha (con precio y playersCount)
     const court = await this.validateCourtAvailability(courtId);
-
-    // ✅ Construir tiempos consistentes (AR -> UTC) con tu helper actual
     const { dateUTC, startUTC, endUTC } = this.buildTimes(date, startTime, endTime);
 
-    // ✅ Chequear solapamiento
     await this.checkTimeSlotAvailability(courtId, dateUTC, startUTC, endUTC);
 
-    // ✅ Crear o reutilizar usuario público
     const user = await this.userService.createOrGet({ name, email });
 
-    // ✅ Total del turno
     const price = this.calculatePrice(startUTC, endUTC, court.pricePerHour);
 
-    // ✅ Cantidad de jugadores (para calcular seña)
     const playersCount = court.playersCount ?? 10;
     if (!Number.isFinite(playersCount) || playersCount <= 0) {
       throw new BadRequestException('La cancha tiene playersCount inválido');
     }
 
-    // ✅ Seña = precio por jugador (redondeo opcional)
-    const rawDeposit = price / playersCount;
-
-    // Opción A: exacto
-    const depositAmount = rawDeposit;
-
+    const depositAmount = price / playersCount;
     const cancelToken = crypto.randomUUID();
 
     return this.prisma.reserva.create({
@@ -63,12 +62,9 @@ export class ReservationService {
         date: dateUTC,
         startTime: startUTC,
         endTime: endUTC,
-
-        // ✅ total y seña
         price,
         depositAmount,
         playersCount,
-
         cancelToken,
         status: 'ACTIVE',
         refunded: false,
@@ -80,14 +76,112 @@ export class ReservationService {
             name: true,
             active: true,
             pricePerHour: true,
-            playersCount: true, // ✅ incluir para mostrar en front
+            playersCount: true,
           },
         },
-        user: {
-          select: { id: true, name: true, email: true },
-        },
+        user: { select: { id: true, name: true, email: true } },
       },
     });
+  }
+
+  // =========================
+  // CREATE HOLD + CHECKOUT MP
+  // =========================
+  async createHoldAndCheckout(dto: CreateHoldReservationDto): Promise<HoldCheckoutResponse> {
+    const { name, email, courtId, date, startTime, endTime } = dto;
+
+    this.ensureNotInPast(date, startTime);
+
+    const court = await this.validateCourtAvailability(courtId);
+    const { dateUTC, startUTC, endUTC } = this.buildTimes(date, startTime, endTime);
+
+    await this.checkTimeSlotAvailability(courtId, dateUTC, startUTC, endUTC);
+
+    const user = await this.userService.createOrGet({ name, email });
+
+    const price = this.calculatePrice(startUTC, endUTC, court.pricePerHour);
+
+    // ✅ playersCount lo define la cancha (no el usuario)
+    const playersCount = court.playersCount ?? 12;
+    if (!Number.isFinite(playersCount) || playersCount < 1) {
+      throw new BadRequestException('La cancha tiene playersCount inválido');
+    }
+
+    // ✅ Seña = lo que paga 1 jugador del total
+    const depositAmount = price / playersCount;
+
+    const cancelToken = crypto.randomUUID();
+    const expiresAt = DateTime.now().plus({ minutes: 10 }).toUTC().toJSDate();
+    const idempotencyKey = crypto.randomUUID().replace(/-/g, '').slice(0, 32);
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const reservation = await tx.reserva.create({
+        data: {
+          courtId,
+          userId: user.id,
+          date: dateUTC,
+          startTime: startUTC,
+          endTime: endUTC,
+          price,
+          depositAmount,
+          playersCount,
+          cancelToken,
+          status: 'PENDING_PAYMENT',
+          expiresAt,
+          refunded: false,
+        },
+        include: { court: true },
+      });
+
+      await tx.payment.create({
+        data: {
+          reservationId: reservation.id,
+          provider: 'MERCADOPAGO',
+          status: 'CREATED',
+          amount: depositAmount, // ✅ coincide con lo que se cobra
+          currency: 'ARS',
+        },
+      });
+
+      return { reservation };
+    });
+
+    // ✅ En MP se cobra SOLO depositAmount (1 jugador)
+    const pref = await this.payments.createPreference({
+      reservationId: created.reservation.id,
+      title: `Seña - ${created.reservation.court.name}`,
+      amount: depositAmount, // ✅ acá estaba el error antes
+      expiresAt,
+      idempotencyKey,
+    });
+
+    await this.prisma.payment.update({
+      where: { reservationId: created.reservation.id },
+      data: { mpPreferenceId: pref.preferenceId },
+    });
+
+    return {
+      reservationId: created.reservation.id,
+      status: created.reservation.status,
+      expiresAt: created.reservation.expiresAt,
+      depositAmount: created.reservation.depositAmount,
+      playersCount: created.reservation.playersCount,
+      checkoutUrl: pref.initPoint,
+    };
+  }
+
+  // ✅ Polling
+  async getById(id: number) {
+    const reservation = await this.prisma.reserva.findUnique({
+      where: { id },
+      include: {
+        court: { select: { id: true, name: true, pricePerHour: true, playersCount: true } },
+        user: { select: { id: true, name: true, email: true } },
+        payment: true,
+      },
+    });
+    if (!reservation) throw new NotFoundException('Reserva no encontrada');
+    return reservation;
   }
 
   // =========================
@@ -103,17 +197,11 @@ export class ReservationService {
       where: { cancelToken: token },
     });
 
-    if (!reservation) {
-      throw new NotFoundException('Reserva no encontrada o token inválido');
-    }
-
-    if (reservation.status === 'CANCELED') {
+    if (!reservation) throw new NotFoundException('Reserva no encontrada o token inválido');
+    if (reservation.status === 'CANCELED')
       throw new BadRequestException('La reserva ya está cancelada');
-    }
 
-    // Comparación correcta: timestamps (no convertir now a UTC a mano)
     const now = new Date();
-
     const hoursUntilReservation =
       (reservation.startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
 
@@ -125,14 +213,11 @@ export class ReservationService {
 
     const updatedReservation = await this.prisma.reserva.update({
       where: { id: reservation.id },
-      data: {
-        status: 'CANCELED',
-        canceledAt: new Date(),
-        refunded: refundApplied,
-      },
+      data: { status: 'CANCELED', canceledAt: new Date(), refunded: refundApplied },
       include: {
-        court: { select: { id: true, name: true} },
+        court: { select: { id: true, name: true } },
         user: { select: { id: true, name: true, email: true } },
+        payment: true,
       },
     });
 
@@ -140,20 +225,11 @@ export class ReservationService {
       ? `Reserva cancelada. Se te devolverá el monto de $${reservation.depositAmount}.`
       : `Reserva cancelada. No se aplicará reembolso (menos de ${this.CANCELLATION_HOURS_LIMIT} horas).`;
 
-    return {
-      reservation: updatedReservation,
-      refundApplied,
-      message,
-      hoursUntilReservation,
-    };
+    return { reservation: updatedReservation, refundApplied, message, hoursUntilReservation };
   }
 
-  AR_TZ = 'America/Argentina/Buenos_Aires';
-
   async getByToken(token: string) {
-    if (!token || token.length < 10) {
-      throw new BadRequestException('Token inválido');
-    }
+    if (!token || token.length < 10) throw new BadRequestException('Token inválido');
 
     const reservation = await this.prisma.reserva.findUnique({
       where: { cancelToken: token },
@@ -163,22 +239,17 @@ export class ReservationService {
       },
     });
 
-    if (!reservation) {
-      throw new NotFoundException('Reserva no encontrada o token inválido');
-    }
+    if (!reservation) throw new NotFoundException('Reserva no encontrada o token inválido');
 
     const now = new Date();
     const hoursUntilReservation =
       (reservation.startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
 
     const canCancel = reservation.status === 'ACTIVE' && hoursUntilReservation >= 0;
-
     const refundEligible = canCancel && hoursUntilReservation >= this.CANCELLATION_HOURS_LIMIT;
 
-    // Si querés devolver horas “redondeadas” para UI
     const hoursUntilRounded = Math.round(hoursUntilReservation * 100) / 100;
 
-    // Opcional: devolver horarios en AR para mostrar lindo
     const startAR = DateTime.fromJSDate(reservation.startTime)
       .setZone(AR_TZ)
       .toFormat('yyyy-LL-dd HH:mm');
@@ -192,7 +263,7 @@ export class ReservationService {
         status: reservation.status,
         price: reservation.price,
         depositAmount: reservation.depositAmount,
-        refunded: reservation.refunded, // esto será true recién después de cancelar
+        refunded: reservation.refunded,
         canceledAt: reservation.canceledAt,
         startTime: startAR,
         endTime: endAR,
@@ -225,45 +296,36 @@ export class ReservationService {
     return court;
   }
 
-  /**
-   * Chequea solapamiento usando instantes UTC (consistentes).
-   */
   private async checkTimeSlotAvailability(
     courtId: number,
     dateUTC: Date,
     startUTC: Date,
     endUTC: Date,
   ): Promise<void> {
+    const now = new Date();
+
     const overlapping = await this.prisma.reserva.findFirst({
       where: {
         courtId,
         date: dateUTC,
-        status: 'ACTIVE',
+        OR: [{ status: 'ACTIVE' }, { status: 'PENDING_PAYMENT', expiresAt: { gt: now } }],
         AND: [{ startTime: { lt: endUTC } }, { endTime: { gt: startUTC } }],
       },
       select: { id: true },
     });
 
-    if (overlapping) {
-      throw new BadRequestException('Horario no disponible');
-    }
+    if (overlapping) throw new BadRequestException('Horario no disponible');
   }
 
   // =========================
   // TIME BUILDERS (AR -> UTC)
   // =========================
-  /**
-   * Interpreta date/start/end como hora Argentina y la convierte a UTC.
-   * También soporta cruces de medianoche (end <= start).
-   */
   private buildTimes(date: string, startTime: string, endTime: string) {
     const startAR = DateTime.fromISO(`${date}T${startTime}`, { zone: AR_TZ });
     let endAR = DateTime.fromISO(`${date}T${endTime}`, { zone: AR_TZ });
 
-    // Si el end es <= start, asumimos que termina al día siguiente
     if (endAR <= startAR) endAR = endAR.plus({ days: 1 });
 
-    // Guardamos "date" como inicio del día en AR (convertido a UTC)
     const dayAR = DateTime.fromISO(date, { zone: AR_TZ }).startOf('day');
 
     return {
@@ -278,31 +340,45 @@ export class ReservationService {
     if (!startAR.isValid) throw new BadRequestException('Fecha u horario inválido');
 
     const nowAR = DateTime.now().setZone(AR_TZ);
-
     if (startAR <= nowAR) {
       throw new BadRequestException(
         'No se puede reservar un horario que ya pasó. Elegí un horario futuro.',
       );
     }
   }
+
   async markCompletedReservations() {
     const nowUTC = DateTime.now().toUTC().toJSDate();
 
     await this.prisma.reserva.updateMany({
-      where: {
-        status: 'ACTIVE',
-        endTime: { lt: nowUTC },
-      },
+      where: { status: 'ACTIVE', endTime: { lt: nowUTC } },
       data: { status: 'COMPLETED' },
     });
   }
-  @Cron('*/5 * * * *') // cada 5 minutos
+
+  @Cron('*/5 * * * *')
   async autoComplete() {
     await this.markCompletedReservations();
   }
-  // =========================
-  // PRICE
-  // =========================
+
+  @Cron('*/1 * * * *')
+  async expirePendingPayments() {
+    const now = new Date();
+
+    await this.prisma.reserva.updateMany({
+      where: { status: 'PENDING_PAYMENT', expiresAt: { lt: now } },
+      data: { status: 'EXPIRED' },
+    });
+
+    await this.prisma.payment.updateMany({
+      where: {
+        status: { in: ['CREATED', 'PENDING'] },
+        reservation: { status: 'EXPIRED' },
+      },
+      data: { status: 'CANCELLED' },
+    });
+  }
+
   private calculatePrice(startUTC: Date, endUTC: Date, pricePerHour: number): number {
     const hours = (endUTC.getTime() - startUTC.getTime()) / (1000 * 60 * 60);
     if (hours <= 0) throw new BadRequestException('Duración inválida');

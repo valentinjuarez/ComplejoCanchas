@@ -2,13 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Court, ReservationPublicResponse } from '@/lib/api';
-import { createReservation, getAvailability } from '@/lib/api';
+import type { Court } from '@/lib/api';
+import { createHoldReservation, getAvailability } from '@/lib/api';
 import CourtSelector from './CourtSelector';
 import DatePicker from './DatePicker';
 import TimeSlotPicker from './TimeSlotPicker';
 import BookingSummary from './BookingSummary';
-import BookingSuccess from './BookingSuccess';
 
 type Props = {
   courts: Court[];
@@ -51,7 +50,6 @@ export default function BookingForm({ courts }: Props) {
   const [creating, setCreating] = useState<boolean>(false);
 
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<ReservationPublicResponse | null>(null);
 
   const endTime = useMemo(() => addOneHour(startTime), [startTime]);
   const selectedCourt = useMemo(
@@ -60,7 +58,6 @@ export default function BookingForm({ courts }: Props) {
   );
 
   function resetForm() {
-    setSuccess(null);
     setError(null);
     setCreating(false);
 
@@ -105,7 +102,6 @@ export default function BookingForm({ courts }: Props) {
   }, [courtId, date]);
 
   async function onSubmit() {
-    setSuccess(null);
     setError(null);
 
     if (!courtId) return setError('Seleccioná una cancha');
@@ -115,7 +111,7 @@ export default function BookingForm({ courts }: Props) {
     try {
       setCreating(true);
 
-      const res = await createReservation({
+      const res = await createHoldReservation({
         name: name.trim(),
         email: email.trim(),
         courtId,
@@ -124,25 +120,13 @@ export default function BookingForm({ courts }: Props) {
         endTime,
       });
 
-      setSuccess(res);
+      // ✅ Redirigir a MP
+      window.location.href = res.checkoutUrl;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Error creando reserva';
+      const msg = e instanceof Error ? e.message : 'Error iniciando el pago';
       setError(msg);
-    } finally {
       setCreating(false);
     }
-  }
-
-  if (success) {
-    return (
-      <BookingSuccess
-        reservation={success}
-        onBookAnother={() => {
-          resetForm();
-        }}
-        onGoHome={() => router.push('/')}
-      />
-    );
   }
 
   return (
@@ -162,18 +146,15 @@ export default function BookingForm({ courts }: Props) {
         </div>
 
         <h2 className="text-2xl font-bold">Nueva Reserva</h2>
-        <p className="text-purple-100">Completá los datos para confirmar</p>
+        <p className="text-purple-100">Completá los datos para pagar la seña</p>
       </div>
 
       <div className="p-8">
         <div className="grid gap-6 lg:grid-cols-2">
-          {/* Left Column */}
           <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-lg transition hover:shadow-xl">
             <div className="space-y-6">
               <CourtSelector courts={activeCourts} value={courtId} onChange={setCourtId} />
-
               <DatePicker value={date} onChange={setDate} />
-
               <TimeSlotPicker
                 occupied={occupied}
                 loading={loadingAvail}
@@ -209,7 +190,6 @@ export default function BookingForm({ courts }: Props) {
             </div>
           </div>
 
-          {/* Right Column - Summary */}
           <div className="rounded-2xl border border-gray-100 bg-white p-3 shadow-lg transition hover:shadow-xl">
             <BookingSummary
               court={selectedCourt}
@@ -231,11 +211,11 @@ export default function BookingForm({ courts }: Props) {
           disabled={creating || activeCourts.length === 0}
           className="mt-8 w-full rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 px-6 py-4 text-lg font-semibold text-white shadow-xl transition hover:from-purple-700 hover:to-blue-700 hover:shadow-2xl disabled:opacity-50"
         >
-          {creating ? 'Confirmando…' : '✓ Confirmar Reserva'}
+          {creating ? 'Redirigiendo a MercadoPago…' : '✓ Pagar seña y confirmar'}
         </button>
 
         <p className="mt-4 text-center text-sm text-gray-500">
-          📬 Recibirás un email con los detalles y el código para cancelar
+          📌 Te redirigimos a MercadoPago para pagar la seña.
         </p>
       </div>
     </div>

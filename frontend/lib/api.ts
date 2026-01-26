@@ -39,9 +39,15 @@ export type CreateReservationPayload = {
   endTime: string; // HH:mm
 };
 
+export type ReservationStatus =
+  | 'PENDING_PAYMENT'
+  | 'ACTIVE'
+  | 'EXPIRED'
+  | 'CANCELED';
+
 export type ReservationPublicResponse = {
   id: number;
-  status: 'ACTIVE' | 'CANCELED';
+  status: ReservationStatus;
   price: number;
   depositAmount: number;
   refunded?: boolean;
@@ -60,6 +66,7 @@ export type CancelReservationResponse = {
   message: string;
   hoursUntilReservation: number;
 };
+
 export type ReservationByTokenResponse = {
   reservation: {
     id: number;
@@ -77,6 +84,17 @@ export type ReservationByTokenResponse = {
   refundEligible: boolean;
   hoursUntilReservation: number;
 };
+
+// ✅ NUEVO: response del HOLD
+export type HoldCheckoutResponse = {
+  reservationId: number;
+  status: ReservationStatus; // normalmente PENDING_PAYMENT
+  expiresAt: string; // ISO
+  depositAmount: number;
+  playersCount: number;
+  checkoutUrl: string;
+};
+
 // ---------- Helpers ----------
 async function handleJson<T>(res: Response): Promise<T> {
   const text = await res.text();
@@ -138,4 +156,24 @@ export async function cancelReservation(
     body: JSON.stringify({ token }),
   });
   return handleJson<CancelReservationResponse>(res);
+}
+
+// ✅ NUEVO: crear hold + devolver checkoutUrl
+export async function createHoldReservation(
+  payload: CreateReservationPayload,
+): Promise<HoldCheckoutResponse> {
+  const res = await fetch(`${API_URL}/reservations/hold`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return handleJson<HoldCheckoutResponse>(res);
+}
+
+// ✅ NUEVO: obtener reserva por id (polling en success)
+export async function getReservationById(
+  id: number,
+): Promise<ReservationPublicResponse> {
+  const res = await fetch(`${API_URL}/reservations/${id}`, { cache: 'no-store' });
+  return handleJson<ReservationPublicResponse>(res);
 }

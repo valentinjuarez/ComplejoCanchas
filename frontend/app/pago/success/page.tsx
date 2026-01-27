@@ -1,9 +1,7 @@
 import PagoSuccessClient from "./PagoSuccessClient";
 
-export default function Page({
-                               searchParams,
-                             }: {
-  searchParams: { rid?: string };
-}) {
-  return <PagoSuccessClient rid={searchParams.rid} />;
+export const dynamic = "force-dynamic"; // evita optimizaciones raras con query params
+
+export default function Page() {
+  return <PagoSuccessClient />;
 }

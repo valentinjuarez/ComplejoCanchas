@@ -1,25 +1,54 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import BookingSuccess from "@/components/booking/BookingSuccess";
 import { getReservationById } from "@/lib/api";
 import type { ReservationPublicResponse } from "@/lib/api";
 
-export default function PagoSuccessClient({ rid }: { rid?: string }) {
-  const router = useRouter();
+function toSingle(param: string | null): string | null {
+  if (!param) return null;
+  const t = param.trim();
+  return t.length ? t : null;
+}
 
-  const ridNum = useMemo(() => Number(rid), [rid]);
+function parsePositiveInt(s: string | null): number | null {
+  if (!s) return null;
+  const n = Number.parseInt(s, 10);
+  if (!Number.isFinite(n) || Number.isNaN(n) || n <= 0) return null;
+  return n;
+}
+
+export default function PagoSuccessClient() {
+  const router = useRouter();
+  const sp = useSearchParams();
+
+  // MercadoPago suele devolver: rid, external_reference, payment_id, collection_id, status, etc.
+  const ridParam = toSingle(sp.get("rid"));
+  const externalRefParam = toSingle(sp.get("external_reference"));
+  const statusParam = toSingle(sp.get("status")) || toSingle(sp.get("collection_status"));
+  const paymentIdParam = toSingle(sp.get("payment_id")) || toSingle(sp.get("collection_id"));
+
+  // ✅ si falta rid, usamos external_reference (MP lo manda)
+  const ridNum = useMemo(() => {
+    const fromRid = parsePositiveInt(ridParam);
+    if (fromRid) return fromRid;
+    const fromExt = parsePositiveInt(externalRefParam);
+    if (fromExt) return fromExt;
+    return null;
+  }, [ridParam, externalRefParam]);
 
   const [reservation, setReservation] = useState<ReservationPublicResponse | null>(null);
   const [status, setStatus] = useState<string>("Cargando…");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!Number.isFinite(ridNum) || ridNum <= 0) {
+    if (!ridNum) {
       setError("Falta rid en la URL.");
       return;
     }
+
+    const id = ridNum; // ✅ ahora TS sabe que es number
 
     let cancelled = false;
 
@@ -27,12 +56,12 @@ export default function PagoSuccessClient({ rid }: { rid?: string }) {
       setError(null);
       setStatus("Confirmando pago…");
 
-      const maxAttempts = 18; // ~36s
+      const maxAttempts = 24;
       for (let i = 0; i < maxAttempts; i++) {
         if (cancelled) return;
 
         try {
-          const r = await getReservationById(ridNum);
+          const r = await getReservationById(id); // ✅ id es number
 
           if (r.status === "ACTIVE") {
             setReservation(r);
@@ -47,6 +76,8 @@ export default function PagoSuccessClient({ rid }: { rid?: string }) {
           } else if (r.status === "CANCELED") {
             setError("La reserva fue cancelada.");
             return;
+          } else {
+            setStatus("Procesando…");
           }
         } catch {
           setStatus("Reintentando…");
@@ -64,7 +95,6 @@ export default function PagoSuccessClient({ rid }: { rid?: string }) {
       cancelled = true;
     };
   }, [ridNum]);
-
   if (reservation) {
     return (
       <div className="mx-auto max-w-3xl p-6">

@@ -45,14 +45,23 @@ export class PaymentService {
     return token;
   }
 
+  // ---------- Helpers de dinero ----------
+  private toCents(value: unknown): number | null {
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(n)) return null;
+    // redondeo a centavos (evita 166.666666)
+    return Math.round(n * 100);
+  }
+
+  private round2(n: number): number {
+    return Math.round(n * 100) / 100;
+  }
+
   private normalizeNotificationId(idRaw: string): string {
     const s = String(idRaw ?? '').trim();
     if (!s) return s;
-
-    // si ya es "123"
     if (/^\d+$/.test(s)) return s;
 
-    // si viene como URL, tomar el último segmento
     try {
       const u = new URL(s);
       const parts = u.pathname.split('/').filter(Boolean);
@@ -61,10 +70,6 @@ export class PaymentService {
       const parts = s.split('/').filter(Boolean);
       return parts[parts.length - 1] ?? s;
     }
-  }
-
-  private normalizeBaseUrl(url: string): string {
-    return String(url || '').trim().replace(/\/+$/, '');
   }
 
   async handleMercadoPagoWebhook(
@@ -88,14 +93,16 @@ export class PaymentService {
     try {
       if (topic.includes('merchant_order')) {
         console.log('[MP] fetching merchant_order', notificationId);
-
         const moResp = await client.get<MpMerchantOrder>(`/merchant_orders/${notificationId}`);
         const mo = moResp.data;
 
         const payments = mo.payments ?? [];
         console.log('[MP] merchant_order payments len', payments.length);
 
-        if (payments.length === 0) return { ok: true, ignored: true };
+        if (payments.length === 0) {
+          // Esto es normal: a veces llega merchant_order vacío y después llega payment.
+          return { ok: true, ignored: true };
+        }
 
         const chosen =
           payments.find((p) => (p.status ?? '').toLowerCase() === 'approved') ??
@@ -117,9 +124,7 @@ export class PaymentService {
       }
     } catch (err: any) {
       const status = err?.response?.status;
-      console.error('[MP] fetch error', { status, message: err?.message });
-
-      // MP a veces manda notificaciones por objetos que después no existen
+      console.log('[MP] fetch error', { status, message: err?.message });
       if (status === 404) return { ok: true, ignored: true };
       throw err;
     }
@@ -130,14 +135,16 @@ export class PaymentService {
       id: String(mpPayment.id),
       status: mpPayment.status,
       external_reference: mpPayment.external_reference,
-      amount: mpPayment.transaction_amount,
-      currency: mpPayment.currency_id,
+      transaction_amount: mpPayment.transaction_amount,
+      currency_id: mpPayment.currency_id,
       orderId: mpPayment.order?.id ? String(mpPayment.order.id) : null,
     });
 
     const reservationId = this.parseReservationId(mpPayment.external_reference);
     if (!reservationId) {
-      throw new BadRequestException('external_reference inválida o faltante');
+      console.log('[MP] invalid external_reference', mpPayment.external_reference);
+      // No tires error duro (MP reintenta); ignoralo.
+      return { ok: true, ignored: true };
     }
 
     const payment = await this.prisma.payment.findUnique({
@@ -154,37 +161,42 @@ export class PaymentService {
     });
 
     if (!payment) {
-      console.log('[MP] payment record not found for reservationId', reservationId);
+      console.log('[MP] payment row not found for reservation', reservationId);
       return { ok: true, ignored: true };
     }
 
     const normalizedStatus = this.mapMpStatus(String(mpPayment.status));
     const mpPaymentId = String(mpPayment.id);
 
-    // idempotencia
+    // Idempotencia
     if (payment.mpPaymentId === mpPaymentId && payment.status === normalizedStatus) {
-      console.log('[MP] idempotent', { reservationId, mpPaymentId, normalizedStatus });
+      console.log('[MP] idempotent - already processed', { reservationId, mpPaymentId });
       return { ok: true, idempotent: true };
     }
 
-    const mpAmount = Number(mpPayment.transaction_amount);
-    if (!Number.isFinite(mpAmount)) {
-      throw new BadRequestException('transaction_amount inválido');
-    }
+    // ✅ Comparación por CENTAVOS para evitar 166.666666 vs 166.67
+    const mpCents = this.toCents(mpPayment.transaction_amount);
+    const dbCents = this.toCents(payment.amount);
 
     const mpCurrency = String(mpPayment.currency_id ?? 'ARS');
+    const dbCurrency = String(payment.currency ?? 'ARS');
 
-    // OJO con decimales raros
-    const sameAmount = Math.abs(mpAmount - payment.amount) < 0.0001;
+    if (mpCents == null || dbCents == null) {
+      console.log('[MP] invalid amounts', { mp: mpPayment.transaction_amount, db: payment.amount });
+      return { ok: true, ignored: true };
+    }
 
-    if (!sameAmount || mpCurrency !== payment.currency) {
-      console.error('[MP] amount/currency mismatch', {
-        mpAmount,
-        dbAmount: payment.amount,
+    if (mpCurrency !== dbCurrency || mpCents !== dbCents) {
+      console.log('[MP] amount/currency mismatch', {
+        mpAmount: this.round2(mpCents / 100),
+        dbAmount: this.round2(dbCents / 100),
         mpCurrency,
-        dbCurrency: payment.currency,
+        dbCurrency,
+        reservationId,
       });
-      throw new BadRequestException('Monto o moneda no coincide');
+
+      // IMPORTANTÍSIMO: no tires 400 (MP reintenta y te spamea)
+      return { ok: true, ignored: true };
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -205,16 +217,7 @@ export class PaymentService {
         select: { id: true, status: true, expiresAt: true },
       });
 
-      if (!reserva) {
-        console.log('[MP] reserva not found', reservationId);
-        return;
-      }
-
-      console.log('[MP] reserva before update', {
-        id: reserva.id,
-        status: reserva.status,
-        expiresAt: reserva.expiresAt,
-      });
+      if (!reserva) return;
 
       if (normalizedStatus === 'APPROVED') {
         if (reserva.status !== 'CANCELED') {
@@ -222,9 +225,7 @@ export class PaymentService {
             where: { id: reservationId },
             data: { status: 'ACTIVE', expiresAt: null },
           });
-          console.log('[MP] reserva set ACTIVE', reservationId);
-        } else {
-          console.log('[MP] reserva is CANCELED, not activating', reservationId);
+          console.log('[MP] reserva set ACTIVE', { reservationId });
         }
       } else if (normalizedStatus === 'REJECTED' || normalizedStatus === 'CANCELLED') {
         if (reserva.status === 'PENDING_PAYMENT') {
@@ -232,8 +233,10 @@ export class PaymentService {
             where: { id: reservationId },
             data: { status: 'EXPIRED' },
           });
-          console.log('[MP] reserva set EXPIRED', reservationId);
+          console.log('[MP] reserva set EXPIRED', { reservationId });
         }
+      } else {
+        console.log('[MP] payment status not final', { normalizedStatus, reservationId });
       }
     });
 
@@ -271,7 +274,6 @@ export class PaymentService {
     const secretRaw = this.cfg.get<string>('MP_WEBHOOK_SECRET');
     const secret = (secretRaw ?? '').trim();
 
-    // si no hay secret, no validar
     if (!secret) {
       console.log('[MP] signature validation skipped (MP_WEBHOOK_SECRET empty)');
       return;
@@ -279,11 +281,6 @@ export class PaymentService {
 
     const signatureHeader = String(input.headers.xSignature ?? '').trim();
     const requestId = String(input.headers.xRequestId ?? '').trim();
-
-    console.log('[MP] validating signature', {
-      hasSig: Boolean(signatureHeader),
-      hasReqId: Boolean(requestId),
-    });
 
     if (!signatureHeader || !requestId) {
       throw new UnauthorizedException('Missing MercadoPago signature headers');
@@ -298,8 +295,6 @@ export class PaymentService {
     }
 
     const idForSignature = this.normalizeNotificationId(input.notificationId);
-
-    // formato oficial esperado
     const manifest = `id:${idForSignature};request-id:${requestId};ts:${ts};`;
     const digest = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
 
@@ -307,12 +302,9 @@ export class PaymentService {
       digest.length === v1.length &&
       crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(v1));
 
-    if (!ok) {
-      console.error('[MP] invalid signature', { manifest, digest, v1 });
-      throw new UnauthorizedException('Invalid MercadoPago signature');
-    }
+    if (!ok) throw new UnauthorizedException('Invalid MercadoPago signature');
 
-    console.log('[MP] signature ok');
+    console.log('[MP] signature OK');
   }
 
   async createPreference(args: {
@@ -322,14 +314,13 @@ export class PaymentService {
     expiresAt: Date;
     idempotencyKey: string;
   }): Promise<{ preferenceId: string; initPoint: string }> {
-    const publicBase = this.normalizeBaseUrl(
-      this.cfg.get<string>('PUBLIC_BASE_URL') ?? 'http://localhost:3001',
-    );
-    const apiBase = this.normalizeBaseUrl(
-      this.cfg.get<string>('API_BASE_URL') ?? 'http://localhost:3000',
-    );
+    const publicBase = this.cfg.get<string>('PUBLIC_BASE_URL') ?? 'http://localhost:3001';
+    const apiBase = this.cfg.get<string>('API_BASE_URL') ?? 'http://localhost:3000';
 
     const client = mpClient(this.accessToken);
+
+    // ✅ IMPORTANTE: unit_price SIEMPRE con 2 decimales (MP trabaja así)
+    const unitPrice = this.round2(Number(args.amount));
 
     const payload = {
       external_reference: String(args.reservationId),
@@ -337,7 +328,7 @@ export class PaymentService {
         {
           title: args.title,
           quantity: 1,
-          unit_price: Number(args.amount),
+          unit_price: unitPrice,
           currency_id: 'ARS',
         },
       ],
@@ -354,14 +345,16 @@ export class PaymentService {
 
     console.log('[MP] createPreference', {
       reservationId: args.reservationId,
-      amount: args.amount,
-      backSuccess: payload.back_urls.success,
+      unitPrice,
       notification_url: payload.notification_url,
+      success: payload.back_urls.success,
     });
 
     const resp = await client.post<MpPreferenceResponse>('/checkout/preferences', payload, {
       headers: { 'X-Idempotency-Key': args.idempotencyKey },
     });
+
+    console.log('[MP] preference created', { id: String(resp.data.id) });
 
     return {
       preferenceId: String(resp.data.id),

@@ -18,16 +18,13 @@ function normalizeId(value: unknown): string | null {
 }
 
 function extractLastPathSegment(urlOrId: string): string {
-  // si ya es un id "123" lo devuelve igual
   if (/^\d+$/.test(urlOrId)) return urlOrId;
 
-  // intenta parsear como URL y tomar el último segmento
   try {
     const u = new URL(urlOrId);
     const parts = u.pathname.split('/').filter(Boolean);
     return parts[parts.length - 1] ?? urlOrId;
   } catch {
-    // fallback: si viene tipo ".../37614797371"
     const parts = urlOrId.split('/').filter(Boolean);
     return parts[parts.length - 1] ?? urlOrId;
   }
@@ -53,10 +50,21 @@ export class PaymentController {
     const body: unknown = req.body;
     const query: any = req.query;
 
-    // topic puede venir como "type" o "topic"
+    // ✅ logs para ver si llega MP
+    console.log('[MP WEBHOOK] hit', {
+      query,
+      body,
+      xSignature: xSignature ?? null,
+      xRequestId: xRequestId ?? null,
+    });
+
     const topic = (pickTopic(body) ?? pickTopic(query) ?? 'payment').toLowerCase();
 
     let notificationId: string | null = null;
+
+    // ✅ FIX: cuando MP manda data[id] (query.data.id), express lo parsea como objeto
+    const queryDataId =
+      typeof query?.data === 'object' && query?.data ? (query.data as any).id : undefined;
 
     if (topic.includes('merchant_order')) {
       // MP suele mandar ?id=...&topic=merchant_order
@@ -67,25 +75,37 @@ export class PaymentController {
         notificationId = extractLastPathSegment(body['resource']);
       }
     } else {
-      // payment: puede venir como ?id=.. o ?data.id=.. o en body.data.id
+      // payment: puede venir como ?id=.. o ?data[id]=.. o en body.data.id
       notificationId =
         normalizeId(query?.id) ??
-        normalizeId(query?.['data.id']) ??
+        normalizeId(queryDataId) ??
         (isRecord(body) && isRecord(body['data']) ? normalizeId(body['data']['id']) : null) ??
         (isRecord(body) ? normalizeId(body['id']) : null);
     }
 
-    if (!notificationId) throw new BadRequestException('id missing');
+    if (!notificationId) {
+      console.error('[MP WEBHOOK] id missing', { topic, query, body });
+      throw new BadRequestException('id missing');
+    }
+
     notificationId = extractLastPathSegment(notificationId);
 
-    return this.payments.handleMercadoPagoWebhook({
-      notificationId,
-      topic,
-      raw: body,
-      headers: {
-        xSignature: xSignature ?? '',
-        xRequestId: xRequestId ?? '',
-      },
-    });
+    console.log('[MP WEBHOOK] parsed', { topic, notificationId });
+
+    // ✅ responder 200 rápido y procesar async (MP no timeoutea)
+    this.payments
+      .handleMercadoPagoWebhook({
+        notificationId,
+        topic,
+        raw: body,
+        headers: {
+          xSignature: xSignature ?? '',
+          xRequestId: xRequestId ?? '',
+        },
+      })
+      .then((r) => console.log('[MP WEBHOOK] processed', r))
+      .catch((e) => console.error('[MP WEBHOOK] process error', e));
+
+    return { ok: true };
   }
 }

@@ -48,18 +48,23 @@ export class PaymentService {
   private normalizeNotificationId(idRaw: string): string {
     const s = String(idRaw ?? '').trim();
     if (!s) return s;
+
+    // si ya es "123"
     if (/^\d+$/.test(s)) return s;
 
+    // si viene como URL, tomar el último segmento
     try {
       const u = new URL(s);
       const parts = u.pathname.split('/').filter(Boolean);
-      const last = parts[parts.length - 1] ?? s;
-      return /^\d+$/.test(last) ? last : last;
+      return parts[parts.length - 1] ?? s;
     } catch {
       const parts = s.split('/').filter(Boolean);
-      const last = parts[parts.length - 1] ?? s;
-      return last;
+      return parts[parts.length - 1] ?? s;
     }
+  }
+
+  private normalizeBaseUrl(url: string): string {
+    return String(url || '').trim().replace(/\/+$/, '');
   }
 
   async handleMercadoPagoWebhook(
@@ -68,6 +73,8 @@ export class PaymentService {
     const topic = String(input.topic || '').toLowerCase();
     const notificationId = this.normalizeNotificationId(input.notificationId);
 
+    console.log('[MP] handle webhook', { topic, notificationId });
+
     this.validateSignatureIfConfigured({
       ...input,
       notificationId,
@@ -75,14 +82,19 @@ export class PaymentService {
     });
 
     const client = mpClient(this.accessToken);
+
     let mpPayment: MpPayment | null = null;
 
     try {
       if (topic.includes('merchant_order')) {
+        console.log('[MP] fetching merchant_order', notificationId);
+
         const moResp = await client.get<MpMerchantOrder>(`/merchant_orders/${notificationId}`);
         const mo = moResp.data;
 
         const payments = mo.payments ?? [];
+        console.log('[MP] merchant_order payments len', payments.length);
+
         if (payments.length === 0) return { ok: true, ignored: true };
 
         const chosen =
@@ -91,20 +103,37 @@ export class PaymentService {
 
         if (!chosen?.id) return { ok: true, ignored: true };
 
+        console.log('[MP] chosen payment from merchant_order', {
+          chosenId: String(chosen.id),
+          chosenStatus: chosen.status,
+        });
+
         const payResp = await client.get<MpPayment>(`/v1/payments/${String(chosen.id)}`);
         mpPayment = payResp.data;
       } else {
+        console.log('[MP] fetching payment', notificationId);
         const payResp = await client.get<MpPayment>(`/v1/payments/${notificationId}`);
         mpPayment = payResp.data;
       }
     } catch (err: any) {
       const status = err?.response?.status;
+      console.error('[MP] fetch error', { status, message: err?.message });
+
+      // MP a veces manda notificaciones por objetos que después no existen
       if (status === 404) return { ok: true, ignored: true };
       throw err;
     }
 
-    // ✅ FIX: TypeScript necesita que garanticemos que NO es null
     if (!mpPayment) return { ok: true, ignored: true };
+
+    console.log('[MP] payment fetched', {
+      id: String(mpPayment.id),
+      status: mpPayment.status,
+      external_reference: mpPayment.external_reference,
+      amount: mpPayment.transaction_amount,
+      currency: mpPayment.currency_id,
+      orderId: mpPayment.order?.id ? String(mpPayment.order.id) : null,
+    });
 
     const reservationId = this.parseReservationId(mpPayment.external_reference);
     if (!reservationId) {
@@ -124,12 +153,17 @@ export class PaymentService {
       },
     });
 
-    if (!payment) return { ok: true, ignored: true };
+    if (!payment) {
+      console.log('[MP] payment record not found for reservationId', reservationId);
+      return { ok: true, ignored: true };
+    }
 
     const normalizedStatus = this.mapMpStatus(String(mpPayment.status));
     const mpPaymentId = String(mpPayment.id);
 
+    // idempotencia
     if (payment.mpPaymentId === mpPaymentId && payment.status === normalizedStatus) {
+      console.log('[MP] idempotent', { reservationId, mpPaymentId, normalizedStatus });
       return { ok: true, idempotent: true };
     }
 
@@ -138,10 +172,18 @@ export class PaymentService {
       throw new BadRequestException('transaction_amount inválido');
     }
 
-    const sameAmount = Math.abs(mpAmount - payment.amount) < 0.0001;
     const mpCurrency = String(mpPayment.currency_id ?? 'ARS');
 
+    // OJO con decimales raros
+    const sameAmount = Math.abs(mpAmount - payment.amount) < 0.0001;
+
     if (!sameAmount || mpCurrency !== payment.currency) {
+      console.error('[MP] amount/currency mismatch', {
+        mpAmount,
+        dbAmount: payment.amount,
+        mpCurrency,
+        dbCurrency: payment.currency,
+      });
       throw new BadRequestException('Monto o moneda no coincide');
     }
 
@@ -163,7 +205,16 @@ export class PaymentService {
         select: { id: true, status: true, expiresAt: true },
       });
 
-      if (!reserva) return;
+      if (!reserva) {
+        console.log('[MP] reserva not found', reservationId);
+        return;
+      }
+
+      console.log('[MP] reserva before update', {
+        id: reserva.id,
+        status: reserva.status,
+        expiresAt: reserva.expiresAt,
+      });
 
       if (normalizedStatus === 'APPROVED') {
         if (reserva.status !== 'CANCELED') {
@@ -171,6 +222,9 @@ export class PaymentService {
             where: { id: reservationId },
             data: { status: 'ACTIVE', expiresAt: null },
           });
+          console.log('[MP] reserva set ACTIVE', reservationId);
+        } else {
+          console.log('[MP] reserva is CANCELED, not activating', reservationId);
         }
       } else if (normalizedStatus === 'REJECTED' || normalizedStatus === 'CANCELLED') {
         if (reserva.status === 'PENDING_PAYMENT') {
@@ -178,6 +232,7 @@ export class PaymentService {
             where: { id: reservationId },
             data: { status: 'EXPIRED' },
           });
+          console.log('[MP] reserva set EXPIRED', reservationId);
         }
       }
     });
@@ -215,10 +270,20 @@ export class PaymentService {
   private validateSignatureIfConfigured(input: WebhookInput): void {
     const secretRaw = this.cfg.get<string>('MP_WEBHOOK_SECRET');
     const secret = (secretRaw ?? '').trim();
-    if (!secret) return;
+
+    // si no hay secret, no validar
+    if (!secret) {
+      console.log('[MP] signature validation skipped (MP_WEBHOOK_SECRET empty)');
+      return;
+    }
 
     const signatureHeader = String(input.headers.xSignature ?? '').trim();
     const requestId = String(input.headers.xRequestId ?? '').trim();
+
+    console.log('[MP] validating signature', {
+      hasSig: Boolean(signatureHeader),
+      hasReqId: Boolean(requestId),
+    });
 
     if (!signatureHeader || !requestId) {
       throw new UnauthorizedException('Missing MercadoPago signature headers');
@@ -234,15 +299,20 @@ export class PaymentService {
 
     const idForSignature = this.normalizeNotificationId(input.notificationId);
 
+    // formato oficial esperado
     const manifest = `id:${idForSignature};request-id:${requestId};ts:${ts};`;
     const digest = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
 
     const ok =
-      digest.length === v1.length && crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(v1));
+      digest.length === v1.length &&
+      crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(v1));
 
     if (!ok) {
+      console.error('[MP] invalid signature', { manifest, digest, v1 });
       throw new UnauthorizedException('Invalid MercadoPago signature');
     }
+
+    console.log('[MP] signature ok');
   }
 
   async createPreference(args: {
@@ -252,8 +322,12 @@ export class PaymentService {
     expiresAt: Date;
     idempotencyKey: string;
   }): Promise<{ preferenceId: string; initPoint: string }> {
-    const publicBase = this.cfg.get<string>('PUBLIC_BASE_URL') ?? 'http://localhost:3001';
-    const apiBase = this.cfg.get<string>('API_BASE_URL') ?? 'http://localhost:3000';
+    const publicBase = this.normalizeBaseUrl(
+      this.cfg.get<string>('PUBLIC_BASE_URL') ?? 'http://localhost:3001',
+    );
+    const apiBase = this.normalizeBaseUrl(
+      this.cfg.get<string>('API_BASE_URL') ?? 'http://localhost:3000',
+    );
 
     const client = mpClient(this.accessToken);
 
@@ -277,6 +351,13 @@ export class PaymentService {
       expires: true,
       expiration_date_to: args.expiresAt.toISOString(),
     };
+
+    console.log('[MP] createPreference', {
+      reservationId: args.reservationId,
+      amount: args.amount,
+      backSuccess: payload.back_urls.success,
+      notification_url: payload.notification_url,
+    });
 
     const resp = await client.post<MpPreferenceResponse>('/checkout/preferences', payload, {
       headers: { 'X-Idempotency-Key': args.idempotencyKey },

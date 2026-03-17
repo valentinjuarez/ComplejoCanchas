@@ -37,3 +37,5 @@ ComplejoCanchas is a full-stack reservation system for a sports complex. Users c
 ---
 
 ## Repository Structure
+/frontend → Next.js app (UI)
+/backend → NestJS API (business logic, DB, payments)
